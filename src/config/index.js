@@ -29,7 +29,7 @@ function required(name) {
 export const config = {
   env: process.env.NODE_ENV || 'development',
   port: int(process.env.PORT, 3009),
-  clientOrigins: (process.env.CLIENT_ORIGIN || 'https://crm-whtapp.netlify.app/,http://localhost:5173/')
+  clientOrigins: (process.env.CLIENT_ORIGIN || 'https://crm-whatsapp-client.vercel.app, http://localhost:5173/')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),

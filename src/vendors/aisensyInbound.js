@@ -71,18 +71,54 @@ function extractContent(messageType, messageValue) {
 
 const INTERNAL_TYPE_BY_LEGACY = { T: 'text', B: 'button', I: 'image', A: 'audio', V: 'video', D: 'document' }
 
+// English status words, matching what processStatusEvent's STATUS_RANK understands —
+// AiSensy/Meta already send these exact lowercase words, so no translation is needed
+// (legacy instead reduces this to a single uppercase letter for its own
+// whatsapp_sent_response.msg_status column; that reduction happens one layer down,
+// inside sentResponseModel, not here).
+const KNOWN_STATUSES = new Set(['sent', 'delivered', 'read', 'failed'])
+
+/**
+ * Port of the status-webhook branch in whatsapp_aisense_response.php (the `else`
+ * branch after the template-category-update check) — a delivery/read/failed
+ * callback for a message this business sent. Legacy deliberately ignores the
+ * vendor's own event timestamp and just records "now" (its `$recvdate` line
+ * comments out the timestamp-based version) — replicated as-is, so no `occurredAt`
+ * is set here either.
+ */
+function parseStatusEvent(value) {
+  const statusEntry = value.statuses?.[0]
+  if (!statusEntry) return null
+
+  const waNumber = value.metadata?.display_phone_number
+  const vendorMessageId = statusEntry.id
+  const status = statusEntry.status
+  if (!waNumber || !vendorMessageId || !KNOWN_STATUSES.has(status)) return null
+
+  let statusRemark = status
+  if (status === 'failed') {
+    const err = statusEntry.errors?.[0]
+    statusRemark = err ? `${err.code}: ${err.error_data?.details || ''}` : 'failed'
+  }
+
+  return { event: status, waNumber, vendorMessageId, statusRemark }
+}
+
 /**
  * Parses one AiSensy webhook call into the internal `handleIncomingWebhook` payload
- * shape. Only the core "a message arrived" path is handled here (see
- * whatsapp_aisense_response.php's `messages`/`smb_message_echoes` handling) —
- * template-category-update notifications and the chatbot/journey automation engine
- * in that file are intentionally not ported. Legacy only ever reads index [0] of
- * each array, never loops over multiple entries/messages — replicated as-is.
+ * shape. Covers the core "a message arrived" path and delivery/read/failed status
+ * callbacks (see whatsapp_aisense_response.php's `messages`/`smb_message_echoes`
+ * and status-callback handling) — template-category-update notifications and the
+ * chatbot/journey automation engine in that file are intentionally not ported.
+ * Legacy only ever reads index [0] of each array, never loops over multiple
+ * entries/messages — replicated as-is.
  */
 export async function parseAiSensyWebhook(rawBody, { employee, userAdminId }) {
   const change = rawBody?.entry?.[0]?.changes?.[0]
   const value = change?.value
   if (!value) return null
+
+  if (value.statuses) return parseStatusEvent(value)
 
   const field = change.field
   const isEcho = field === 'smb_message_echoes'
