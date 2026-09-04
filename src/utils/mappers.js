@@ -1,0 +1,92 @@
+import { normalizeLegacyText } from './sanitize.js'
+
+// Legacy single-letter `type` column -> the renderer key the frontend understands.
+// F (template) and B (button-reply) carry plain/HTML text just like T, so they
+// render as text too — there's no dedicated "template" bubble in WhatsApp Web itself.
+const TYPE_MAP = { T: 'text', F: 'text', B: 'text', I: 'image', V: 'video', A: 'audio', D: 'document' }
+const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'document'])
+
+// Exactly `whatsapp_chatt_message_container.php`'s tick logic: msg_status R/S/D/F
+// from the latest matching `whatsapp_sent_response` row (preferring 'R'), falling
+// back to "sent" (a plain single check) when no such row exists yet.
+const SENT_RESPONSE_STATUS_MAP = { R: 'read', D: 'delivered', S: 'sent', F: 'failed' }
+export const TICK_STATUS_TO_MSG_STATUS = { sent: 'S', delivered: 'D', read: 'R', failed: 'F' }
+
+// `tbl_account.user_type` only distinguishes Customer/Vendor in the live schema — the
+// legacy `for=C/L/D` (customer/lead/deal) route param can't be fully reproduced without
+// the separate lead/deal tables, which are out of scope for this build.
+export const USER_TYPE_TO_FOR = { 1: 'C', 2: 'V' }
+
+export function mapMsgStatusToTickStatus(msgStatus) {
+  return SENT_RESPONSE_STATUS_MAP[msgStatus] || 'sent'
+}
+
+/** `sentStatusRow` comes from sentResponseModel.findLatestStatus(s)/findLatestStatusMap — null if none exists yet. */
+function deriveOutboundStatus(row, sentStatusRow) {
+  if (sentStatusRow) return mapMsgStatusToTickStatus(sentStatusRow.msgStatus)
+  return row.status === 'Y' ? 'sent' : 'sending'
+}
+
+export function toMessageDto(row, sentStatusRow = null) {
+  const direction = row.msgtype === 'S' ? 'outbound' : 'inbound'
+  const type = TYPE_MAP[row.type] || 'text'
+  const isMedia = MEDIA_TYPES.has(type)
+  const status = direction === 'outbound' ? deriveOutboundStatus(row, sentStatusRow) : 'delivered'
+
+  return {
+    id: row.sl,
+    mobile: row.mobile,
+    direction,
+    type,
+    text: isMedia ? null : normalizeLegacyText(row.text),
+    media: isMedia
+      ? {
+          url: row.imageUrl || null,
+          filename: row.text || null,
+          source: direction === 'inbound' ? 'vendor' : 'local',
+        }
+      : null,
+    status,
+    failedReason: status === 'failed' ? sentStatusRow?.statusRemark || null : null,
+    vendorMessageId: row.sourceId || null,
+    createdAt: row.recvDate,
+  }
+}
+
+export function toConversationSummaryDto(row, account, sentStatusRow = null, context = {}) {
+  return {
+    mobile: row.mobile,
+    name: account?.contactPersonName || account?.accountName || row.name,
+    countryCode: row.countryCode,
+    stopService: account ? account.stopService === 'Y' : false,
+    unreadCount: Number(row.unreadCount) || 0,
+    updatedAt: row.recvDate,
+    // Identity fields the legacy `whatsapp_chat.php?...` route carries as query params
+    // (refid, for, useradminid, wabano) — surfaced here so the sidebar can build that
+    // same URL shape when opening a chat.
+    accountId: account?.accountId ?? null,
+    for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,
+    userAdminId: context.userAdminId ?? null,
+    wabano: context.wabano ?? null,
+    lastMessage: {
+      type: TYPE_MAP[row.type] || 'text',
+      text: MEDIA_TYPES.has(TYPE_MAP[row.type]) ? null : normalizeLegacyText(row.text),
+      direction: row.msgtype === 'S' ? 'outbound' : 'inbound',
+      status: row.msgtype === 'S' ? deriveOutboundStatus(row, sentStatusRow) : 'delivered',
+      createdAt: row.recvDate,
+    },
+  }
+}
+
+export function toContactDto(mobile, account, fallbackName, context = {}) {
+  return {
+    mobile,
+    name: account?.contactPersonName || account?.accountName || fallbackName || mobile,
+    stopService: account ? account.stopService === 'Y' : false,
+    accountId: account?.accountId ?? null,
+    for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,
+    countryCode: context.countryCode ?? null,
+    userAdminId: context.userAdminId ?? null,
+    wabano: context.wabano ?? null,
+  }
+}
