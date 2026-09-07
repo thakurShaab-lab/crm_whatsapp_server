@@ -1,6 +1,6 @@
 import { saveMediaBuffer } from '../utils/mediaStorage.js'
 import { refreshAiSensyTokenIfNeeded } from './aisensyToken.js'
-import { getIsdFromMobile } from '../utils/isdCodes.js'
+import { getIsdFromMobile, getIsdFromIso2 } from '../utils/isdCodes.js'
 
 // Exact list from the legacy webhook handler (whatsapp_aisense_response.php) —
 // a button-reply's text is checked against these to detect a WhatsApp-native
@@ -36,11 +36,20 @@ async function downloadAiSensyMedia({ employee, mediaId, filename, userAdminId }
   return { url: saved.url, mime }
 }
 
+/**
+ * `contacts[0].user_id` looks like "IN.9198..." — the prefix before the dot is an
+ * ISO 3166-1 alpha-2 country code (e.g. "IN"), NOT a numeric ISD code, and must be
+ * looked up. Previously this returned the raw ISO letters directly (e.g. "IN"),
+ * which then hit `Number("IN")` -> NaN downstream and crashed the message insert
+ * against the `country_code` INT column — silently dropping every inbound message.
+ * Mirrors legacy's exact fallback chain: ISO2 lookup, then mobile-prefix detection,
+ * then a hard '91' default.
+ */
 function extractCountryCode({ userId, mobile }) {
-  if (userId) {
-    const isoCode = userId.split('.')[0]
-    if (isoCode) return isoCode
-  }
+  const iso2 = userId?.split('.')[0]
+  const fromIso2 = iso2 ? getIsdFromIso2(iso2) : ''
+  if (fromIso2) return fromIso2
+
   const detected = getIsdFromMobile(mobile)
   return detected || '91'
 }

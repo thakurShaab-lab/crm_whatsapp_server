@@ -1,6 +1,7 @@
 import * as messagesModel from '../models/messagesModel.js'
 import * as sentResponseModel from '../models/sentResponseModel.js'
 import * as accountModel from '../models/accountModel.js'
+import * as logModel from '../models/logModel.js'
 import { toMessageDto, mapMsgStatusToTickStatus, TICK_STATUS_TO_MSG_STATUS } from '../utils/mappers.js'
 import { sanitizePlainText } from '../utils/sanitize.js'
 import { HttpError } from '../middleware/errorHandler.js'
@@ -176,6 +177,18 @@ export async function handleIncomingWebhook({ userAdminId, waNumber, payload }) 
  * legacy, since a webhook call carries no auth/session context of its own.
  */
 async function receiveAiSensyWebhook(req, res) {
+  // TEMPORARY diagnostic capture: logs the exact raw payload AiSensy sends, before
+  // any parsing — so a payload-shape mismatch (which the rest of this function
+  // otherwise ACKs silently, by design, so the vendor doesn't retry) is actually
+  // visible. Safe to remove once inbound messages are confirmed working.
+  await logModel
+    .insertApiLog({
+      userAdminId: config.defaultUserAdminId,
+      apiUrlUse: 'aisensy_webhook_raw_capture',
+      jsonData: req.body,
+    })
+    .catch(() => {})
+
   const displayPhoneNumber = req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.display_phone_number
   const employee = displayPhoneNumber ? await findEmployeeByWabaNo(displayPhoneNumber) : null
   if (!employee) {
