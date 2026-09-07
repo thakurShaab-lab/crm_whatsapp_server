@@ -11,3 +11,7 @@ export function emitStatusUpdate(waNumber, payload) {
 export function emitConversationRead(waNumber, payload) {
   getIO().to(waRoom(waNumber)).emit('conversation:read', payload)
 }
+
+export function emitConversationDeleted(waNumber, payload) {
+  getIO().to(waRoom(waNumber)).emit('conversation:deleted', payload)
+}

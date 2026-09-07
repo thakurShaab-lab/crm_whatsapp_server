@@ -25,4 +25,10 @@ router.post(
   asyncHandler(conversationsController.markRead),
 )
 
+router.delete(
+  '/:mobile',
+  validate({ params: z.object({ mobile: z.string().min(1) }) }),
+  asyncHandler(conversationsController.deleteConversation),
+)
+
 export default router
