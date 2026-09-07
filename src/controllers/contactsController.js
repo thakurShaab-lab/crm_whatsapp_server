@@ -6,11 +6,9 @@ import { HttpError } from '../middleware/errorHandler.js'
 export async function searchContacts(req, res) {
   const rows = await accountModel.searchAccounts({ userAdminId: req.userAdminId, search: req.query.search })
   res.json({
-    items: rows.map((row) => ({
-      mobile: row.phone,
-      name: row.contactPersonName || row.accountName,
-      stopService: row.stopService === 'Y',
-    })),
+    items: rows.map((row) =>
+      toContactDto(row.phone, row, null, { userAdminId: req.userAdminId, wabano: req.waNumber }),
+    ),
   })
 }
 
