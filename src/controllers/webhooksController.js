@@ -13,6 +13,28 @@ import { config } from '../config/index.js'
 
 const INBOUND_TYPE_TO_LEGACY = { text: 'T', button: 'B', image: 'I', video: 'V', audio: 'A', document: 'D' }
 
+/**
+ * Meta's Cloud API webhook verification handshake (AiSensy passes it through
+ * unchanged): when you register the callback URL on their dashboard, they GET it
+ * once with `hub.mode=subscribe`, `hub.verify_token`, and `hub.challenge` — the
+ * server must echo back the challenge as plain text if the token matches, or the
+ * webhook registration is rejected. Not a real per-request auth mechanism, just a
+ * one-time "yes, this URL really belongs to you" check.
+ */
+export function verifyWebhookSubscription(req, res) {
+  const mode = req.query['hub.mode']
+  const token = req.query['hub.verify_token']
+  const challenge = req.query['hub.challenge']
+
+  if (!config.webhookVerifyToken) {
+    throw new HttpError(500, 'WEBHOOK_VERIFY_TOKEN is not configured on this server')
+  }
+  if (mode === 'subscribe' && token === config.webhookVerifyToken) {
+    return res.status(200).type('text/plain').send(challenge)
+  }
+  throw new HttpError(403, 'Webhook verification token mismatch')
+}
+
 const STATUS_RANK = { sending: 0, sent: 1, delivered: 2, read: 3, failed: 4 }
 
 /**

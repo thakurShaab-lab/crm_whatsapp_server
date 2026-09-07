@@ -1,6 +1,7 @@
 import { updateWhatsappToken } from '../models/employeesModel.js'
 
 const REGENERATE_TOKEN_URL = 'https://backend.aisensy.com/direct-apis/t1/users/regenrate-token'
+const UPDATE_WEBHOOK_URL = 'https://backend.aisensy.com/direct-apis/t1/settings/update-webhook'
 
 /** Decodes a JWT's payload segment without verifying the signature — only used to read the `iat` claim. */
 function decodeJwtPayload(token) {
@@ -61,4 +62,26 @@ export async function refreshAiSensyTokenIfNeeded(employee) {
 
   const { token, tokenExpiresAt } = await refreshAiSensyToken(employee)
   return { ...employee, whatsappApiUsername: token, waTokenExpDt: tokenExpiresAt }
+}
+
+/**
+ * Points this WABA number's webhook subscription at a URL, via AiSensy's Direct API
+ * (`PATCH .../settings/update-webhook`, body `{ webhooks: { url } }`). Always forces
+ * a fresh token first rather than trusting the stored one's (unreliable — see the
+ * `iat`-as-expiry note above) expiry check, since a stale token is the most likely
+ * cause of this endpoint's "Invalid Token!" error.
+ */
+export async function updateAiSensyWebhook(employee, webhookUrl) {
+  const { token } = await refreshAiSensyToken(employee)
+
+  const response = await fetch(UPDATE_WEBHOOK_URL, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ webhooks: { url: webhookUrl } }),
+  })
+  const data = await response.json()
+  if (!response.ok) {
+    throw new Error(`AiSensy update-webhook failed (${response.status}): ${JSON.stringify(data)}`)
+  }
+  return data
 }

@@ -55,4 +55,8 @@ export const config = {
   // `localhost`, so uploaded files need a real public HTTPS origin to be usable in
   // an outbound media message. Unset until this server has one.
   publicMediaBaseUrl: process.env.PUBLIC_MEDIA_BASE_URL || null,
+  // A secret string you invent and paste into the "Verify Token" field when
+  // registering the webhook URL on AiSensy/Meta's dashboard — proves the GET
+  // verification handshake (see webhooks.routes.js) is really coming from them.
+  webhookVerifyToken: process.env.WEBHOOK_VERIFY_TOKEN || null,
 }

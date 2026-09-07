@@ -43,4 +43,8 @@ router.post(
   asyncHandler(webhooksController.receiveVendorWebhook),
 )
 
+// The one-time GET verification handshake Meta/AiSensy does when you register the
+// webhook URL on their dashboard — see verifyWebhookSubscription for details.
+router.get('/:vendor', asyncHandler(webhooksController.verifyWebhookSubscription))
+
 export default router
