@@ -1,7 +1,6 @@
-import { and, desc, eq, gt, lt, or, like, max, count, isNull } from 'drizzle-orm'
+import { and, desc, eq, gt, lt, or, like, max, count } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { messages } from '../schema/messages.js'
-import { chatDeletions } from '../schema/chatDeletions.js'
 
 function scope({ userAdminId, waNumber }) {
   return [eq(messages.userAdminId, userAdminId), eq(messages.waNumber, waNumber)]
@@ -39,16 +38,7 @@ export async function listConversations({ userAdminId, waNumber, search, unreadO
     ...scope({ userAdminId, waNumber }),
   )
 
-  // A "deleted" conversation is hidden only up until a newer message arrives — once
-  // the latest message postdates the deletion, it reappears automatically (matching
-  // real WhatsApp Web), so this is a comparison against maxRecvDate, not a flag.
-  const deletions = db
-    .select({ mobile: chatDeletions.mobile, deletedAt: chatDeletions.deletedAt })
-    .from(chatDeletions)
-    .where(and(eq(chatDeletions.userAdminId, userAdminId), eq(chatDeletions.waNumber, waNumber)))
-    .as('deletions')
-
-  const outerConditions = [or(isNull(deletions.deletedAt), gt(latest.maxRecvDate, deletions.deletedAt))]
+  const outerConditions = []
   if (cursor) {
     outerConditions.push(
       or(
@@ -61,7 +51,7 @@ export async function listConversations({ userAdminId, waNumber, search, unreadO
     outerConditions.push(gt(unread.unreadCount, 0))
   }
 
-  const query = db
+  let query = db
     .select({
       sl: messages.sl,
       mobile: messages.mobile,
@@ -78,8 +68,10 @@ export async function listConversations({ userAdminId, waNumber, search, unreadO
     .from(latest)
     .innerJoin(messages, joinCondition)
     .leftJoin(unread, eq(unread.mobile, latest.mobile))
-    .leftJoin(deletions, eq(deletions.mobile, latest.mobile))
-    .where(and(...outerConditions))
+
+  if (outerConditions.length > 0) {
+    query = query.where(and(...outerConditions))
+  }
 
   const rows = await query.orderBy(desc(latest.maxRecvDate), desc(latest.mobile)).limit(limit + 1)
   return rows

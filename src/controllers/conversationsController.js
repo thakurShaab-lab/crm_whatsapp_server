@@ -1,10 +1,9 @@
 import * as messagesModel from '../models/messagesModel.js'
 import * as accountModel from '../models/accountModel.js'
 import * as sentResponseModel from '../models/sentResponseModel.js'
-import * as chatDeletionsModel from '../models/chatDeletionsModel.js'
 import { toConversationSummaryDto } from '../utils/mappers.js'
 import { encodeCursor, decodeCursor } from '../utils/pagination.js'
-import { emitConversationRead, emitConversationDeleted } from '../socket/emitters.js'
+import { emitConversationRead } from '../socket/emitters.js'
 
 const PAGE_SIZE = 30
 
@@ -72,16 +71,4 @@ export async function markRead(req, res) {
   }
 
   res.json({ mobile, readAt, messageIds })
-}
-
-/**
- * "Delete chat" — soft: hides the conversation from the sidebar (see
- * messagesModel.listConversations' deletion-timestamp filter) without touching any
- * message rows. If the contact messages again afterward, it reappears automatically.
- */
-export async function deleteConversation(req, res) {
-  const { mobile } = req.params
-  await chatDeletionsModel.hideConversation({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile })
-  emitConversationDeleted(req.waNumber, { mobile })
-  res.json({ mobile })
 }
