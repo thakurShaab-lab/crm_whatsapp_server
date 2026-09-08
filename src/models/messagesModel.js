@@ -117,6 +117,19 @@ export async function findMessageBySourceId(sourceId) {
   return row || null
 }
 
+/**
+ * Backfills ownership after the fact — exactly the legacy's two-phase flow: a message
+ * row is inserted first, then `UPDATE whatsapp_incoming_reply_response SET send_by=...,
+ * lead_id=..., is_insert='Y' WHERE sl=...` once the CRM account/lead resolution
+ * (leadAutoCreation.js) has run.
+ */
+export async function updateOwnership({ sl, sendBy, userAdminId, accountId, leadId }) {
+  await db
+    .update(messages)
+    .set({ sendBy, userAdminId, accountId, leadId, isInsert: 'Y', insertDate: new Date() })
+    .where(eq(messages.sl, sl))
+}
+
 export async function insertMessage(values) {
   const result = await db.insert(messages).values(values)
   const insertId = Array.isArray(result) ? result[0].insertId : result.insertId

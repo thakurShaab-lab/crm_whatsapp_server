@@ -10,6 +10,9 @@ import { isContactActive } from '../socket/activeSubscriptions.js'
 import { buildConversationSummaryDto } from './conversationsController.js'
 import { findEmployeeById, findEmployeeByWabaNo } from '../models/employeesModel.js'
 import { parseAiSensyWebhook } from '../vendors/aisensyInbound.js'
+import { resolveInboundOwnership } from '../services/leadAutoCreation.js'
+import { sendAutoTextSafely } from '../services/outboundSend.js'
+import * as companyDetailsModel from '../models/companyDetailsModel.js'
 import { config } from '../config/index.js'
 
 const INBOUND_TYPE_TO_LEGACY = { text: 'T', button: 'B', image: 'I', video: 'V', audio: 'A', document: 'D' }
@@ -84,6 +87,11 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
     await accountModel.setStopService({ userAdminId, mobile: contact.mobile, countryCode: contact.countryCode, stopService })
   }
 
+  // Resolved below (real inbound messages only — not our own echoed sends, which have
+  // no real customer profile to create a lead from) and backfilled onto the row via
+  // messagesModel.updateOwnership, exactly matching the legacy's insert-then-update flow.
+  let ownership = null
+
   const inserted = await messagesModel.insertMessage({
     response: 'Received',
     name: contact.name || contact.mobile,
@@ -128,7 +136,42 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
     waMktgAmt: 0,
   })
 
-  const dto = toMessageDto(inserted)
+  if (msgtype === 'R') {
+    ownership = await resolveInboundOwnership({
+      userAdminId,
+      mobile: contact.mobile,
+      countryCode: contact.countryCode || '91',
+      profileName: contact.name,
+    })
+    await messagesModel.updateOwnership({
+      sl: inserted.sl,
+      sendBy: ownership.jrId,
+      userAdminId,
+      accountId: ownership.accountId,
+      leadId: ownership.leadId,
+    })
+
+    // "Chk Auto Response Message" (whatsapp_aisense_response.php ~line 1898): a
+    // per-employee canned auto-reply, sent on every inbound message when configured
+    // and enabled — opt-in (autoRespDisp defaults to 'P', not 'Y'), so this is a
+    // no-op for the vast majority of employees. Never allowed to break receipt of
+    // the real inbound message it's replying to.
+    const autoResponseText = await companyDetailsModel.findEnabledAutoResponse(userAdminId)
+    if (autoResponseText) {
+      const employee = await findEmployeeById(userAdminId)
+      sendAutoTextSafely({
+        employee,
+        userAdminId,
+        waNumber,
+        mobile: contact.mobile,
+        countryCode: contact.countryCode,
+        text: autoResponseText,
+        accountId: ownership.accountId,
+      })
+    }
+  }
+
+  const dto = toMessageDto(ownership ? { ...inserted, sendBy: ownership.jrId, accountId: ownership.accountId, leadId: ownership.leadId } : inserted)
   const conversation = await buildConversationSummaryDto({ userAdminId, waNumber, mobile: contact.mobile })
   emitNewMessage(waNumber, { mobile: contact.mobile, message: dto, conversation })
 

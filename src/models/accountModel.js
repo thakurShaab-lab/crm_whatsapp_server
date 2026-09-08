@@ -19,6 +19,31 @@ export async function findAccountByPhone({ userAdminId, mobile, countryCode }) {
   return row || null
 }
 
+/**
+ * Exact 3-variant phone match legacy uses to gate lead/account auto-creation (full
+ * mobile, ISD-stripped local number, or the "NA "+local storage quirk) — stricter
+ * than `findAccountByPhone`'s fuzzy LIKE match, since a false negative here would
+ * wrongly create a duplicate account for an existing client.
+ */
+export async function findAccountByPhoneVariants({ userAdminId, mobile, lastTenMobile }) {
+  const [row] = await db
+    .select()
+    .from(account)
+    .where(
+      and(
+        eq(account.userAdminId, userAdminId),
+        or(eq(account.phone, mobile), eq(account.phone, lastTenMobile), eq(account.phone, `NA ${lastTenMobile}`)),
+      ),
+    )
+    .limit(1)
+  return row || null
+}
+
+export async function insertAccount(values) {
+  const result = await db.insert(account).values(values)
+  return Array.isArray(result) ? result[0].insertId : result.insertId
+}
+
 /** Resolves an account directly by id — used when the caller already knows `account_id` (the legacy `refid` query param) instead of guessing from a phone number. */
 export async function findAccountById({ userAdminId, accountId }) {
   const [row] = await db
