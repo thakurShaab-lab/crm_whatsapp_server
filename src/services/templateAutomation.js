@@ -13,6 +13,7 @@ import * as whatsappSentFromClientModel from '../models/whatsappSentFromClientMo
 import * as messagesModel from '../models/messagesModel.js'
 import * as logModel from '../models/logModel.js'
 import { refreshAiSensyTokenIfNeeded } from '../vendors/aisensyToken.js'
+import { logger } from '../utils/logger.js'
 
 // `template_variable_name.sec_type_field_name` and the raw CRM column names it
 // carries are admin-configured data, not end-user input, but a raw identifier is
@@ -179,6 +180,10 @@ export async function sendAutomationWhatsappTemplate({ userAdminId, sourceId, st
   if (!employee || employee.whatsappVendor !== 'A') return { sent: false, reason: 'not_aisensy_vendor' }
 
   const variableRows = await templateVariableNameModel.findForTemplate(rule.templateId)
+  if (template.templateVariable > 0 && variableRows.length === 0) {
+    return { sent: false, reason: 'variable_mappings_missing' }
+  }
+
   const rawValues = []
   for (const variableRow of variableRows) {
     const [prefix, field] = (variableRow.secTypeFieldName || '').split('~')
@@ -268,4 +273,61 @@ export async function sendAutomationWhatsappTemplate({ userAdminId, sourceId, st
   }
 
   return { sent: true, sourceId: sourceMsgId }
+}
+
+// Reasons that mean "nothing configured for this yet" — an expected, silent no-op.
+const SKIP_REASONS = new Set(['no_matching_rule', 'opted_out_or_missing', 'unsupported_section_type', 'not_aisensy_vendor'])
+// Reasons that reached real config but that config is broken — still a safe no-op,
+// but worth a louder log since it likely means something needs fixing.
+const MISCONFIGURED_REASONS = new Set(['template_not_usable', 'variable_mappings_missing', 'lead_not_found'])
+
+/**
+ * Entry point for "trigger on the customer's first message" — called once per
+ * inbound message from webhooksController, independent of whether a CRM
+ * account/lead already existed (an imported account can still be receiving its
+ * first-ever message). Fires the matching automation rule (if any) exactly once
+ * per conversation: `messagesModel.countInboundMessages` is checked AFTER the
+ * current message is already inserted, so a count of exactly 1 means this row
+ * *is* the first one — every later message for the same (waNumber, mobile) will
+ * see a count > 1 and skip. Never throws: every outcome (triggered, skipped,
+ * failed) is logged and returned, not raised, so a misconfigured automation rule
+ * or a vendor-side rejection can never break receipt of the real inbound message.
+ */
+export async function triggerFirstMessageAutomation({ userAdminId, waNumber, mobile, ownership }) {
+  const logContext = { userAdminId, waNumber, mobile, accountId: ownership.accountId, leadId: ownership.leadId }
+
+  try {
+    const inboundCount = await messagesModel.countInboundMessages({ userAdminId, waNumber, mobile })
+    if (inboundCount !== 1) {
+      logger.debug({ ...logContext, inboundCount }, 'first-message automation: skipped (not the first message)')
+      return { sent: false, reason: 'not_first_message' }
+    }
+
+    const sectionType = ownership.leadId > 0 ? 2 : 1
+    const result = await sendAutomationWhatsappTemplate({
+      userAdminId,
+      sourceId: ownership.sourceId,
+      stageId: ownership.leadStageId || '',
+      sectionType,
+      accountId: ownership.accountId,
+      leadId: ownership.leadId,
+    })
+
+    if (result.sent) {
+      logger.info({ ...logContext, sourceId: result.sourceId }, 'first-message automation: triggered')
+    } else if (result.reason === 'vendor_send_failed') {
+      logger.warn({ ...logContext }, 'first-message automation: failed (vendor rejected the send)')
+    } else if (MISCONFIGURED_REASONS.has(result.reason)) {
+      logger.warn({ ...logContext, reason: result.reason }, 'first-message automation: skipped (likely misconfigured)')
+    } else if (SKIP_REASONS.has(result.reason)) {
+      logger.debug({ ...logContext, reason: result.reason }, 'first-message automation: skipped (nothing configured)')
+    } else {
+      logger.info({ ...logContext, reason: result.reason }, 'first-message automation: skipped')
+    }
+
+    return result
+  } catch (error) {
+    logger.error({ ...logContext, err: error }, 'first-message automation: failed (unexpected error)')
+    return { sent: false, reason: 'unexpected_error' }
+  }
 }

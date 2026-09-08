@@ -128,6 +128,15 @@ export async function findLastInboundReply({ mobile, waNumber }) {
   return row || null
 }
 
+/** Total genuine inbound messages ever received from this contact on this WABA — called after the current message is already inserted, so a result of exactly 1 means this is their first message ever. */
+export async function countInboundMessages({ userAdminId, waNumber, mobile }) {
+  const [row] = await db
+    .select({ total: count() })
+    .from(messages)
+    .where(and(...scope({ userAdminId, waNumber }), eq(messages.mobile, mobile), eq(messages.msgtype, 'R')))
+  return Number(row?.total || 0)
+}
+
 /**
  * Backfills ownership after the fact — exactly the legacy's two-phase flow: a message
  * row is inserted first, then `UPDATE whatsapp_incoming_reply_response SET send_by=...,

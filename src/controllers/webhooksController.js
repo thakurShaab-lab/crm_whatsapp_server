@@ -13,6 +13,7 @@ import { parseAiSensyWebhook } from '../vendors/aisensyInbound.js'
 import { resolveInboundOwnership } from '../services/leadAutoCreation.js'
 import { sendAutoTextSafely } from '../services/outboundSend.js'
 import { processInboundForJourney } from '../services/journeyEngine.js'
+import { triggerFirstMessageAutomation } from '../services/templateAutomation.js'
 import * as companyDetailsModel from '../models/companyDetailsModel.js'
 import { config } from '../config/index.js'
 
@@ -151,6 +152,12 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
       accountId: ownership.accountId,
       leadId: ownership.leadId,
     })
+
+    // Fires the matching tbl_automation template exactly once per conversation, on
+    // the customer's first-ever message — independent of whether a CRM account/lead
+    // was just created (see templateAutomation.js's triggerFirstMessageAutomation).
+    // Never throws and never blocks the inbound message on a vendor/config failure.
+    await triggerFirstMessageAutomation({ userAdminId, waNumber, mobile: contact.mobile, ownership })
 
     const employee = await findEmployeeById(userAdminId)
 

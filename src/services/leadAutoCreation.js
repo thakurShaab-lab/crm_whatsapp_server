@@ -6,7 +6,6 @@ import * as leadSourceModel from '../models/leadSourceModel.js'
 import * as stagesModel from '../models/stagesModel.js'
 import * as activityModel from '../models/activityModel.js'
 import * as fbRoutingModel from '../models/fbRoutingModel.js'
-import { sendAutomationWhatsappTemplate } from './templateAutomation.js'
 
 /** Matches PHP's `preg_replace('/^'.$country_code.'/', '', $mobile)` — strips a leading ISD code of any length, not just India's. */
 function stripCountryCode(mobile, countryCode) {
@@ -31,7 +30,14 @@ function stripCountryCode(mobile, countryCode) {
  *   scope and is never returned) — every newly-created lead's `lead_id` column there
  *   silently ends up 0. This port returns the real, just-created lead id instead.
  *
- * @returns {Promise<{accountId: number, leadId: number, jrId: number, created: boolean}>}
+ * The `send_automation_whatsapp_template()` trigger itself no longer lives here —
+ * see templateAutomation.js's `triggerFirstMessageAutomation`, called once per
+ * conversation from webhooksController based on actual message history, not on
+ * whether a CRM record happened to be created (an account/lead can already exist —
+ * e.g. imported — for a mobile that has never actually messaged in before).
+ * `sourceId`/`leadStageId` are still returned here since that caller needs them.
+ *
+ * @returns {Promise<{accountId: number, leadId: number, jrId: number, sourceId: number, leadStageId: string, created: boolean}>}
  */
 export async function resolveInboundOwnership({ userAdminId, mobile, countryCode, profileName }) {
   const lastTenMobile = stripCountryCode(mobile, countryCode)
@@ -40,7 +46,15 @@ export async function resolveInboundOwnership({ userAdminId, mobile, countryCode
   if (existingAccount) {
     const existingLead = await leadsModel.findLeadByAccountId(existingAccount.accountId)
     const jrId = existingLead?.leadOwner > 0 ? existingLead.leadOwner : existingAccount.createdBy
-    return { accountId: existingAccount.accountId, leadId: existingLead?.leadId || 0, jrId, created: false }
+    const sourceId = await leadSourceModel.findOrCreateWhatsappSource(userAdminId)
+    return {
+      accountId: existingAccount.accountId,
+      leadId: existingLead?.leadId || 0,
+      jrId,
+      sourceId,
+      leadStageId: existingLead?.leadStatus || '',
+      created: false,
+    }
   }
 
   // Company name / lead title / contact first name, all in one — exactly `$comp_name`
@@ -68,11 +82,6 @@ export async function resolveInboundOwnership({ userAdminId, mobile, countryCode
 
   await accountAddressesModel.insertPlaceholderAddress(accountId)
 
-  // "atuo template send code here" (whatsapp_aisense_response.php ~line 1793) — fires
-  // right after account creation, section_type=1 (Customer), no stage yet. Never
-  // allowed to break account/lead creation if the automation lookup or vendor send fails.
-  await sendAutomationWhatsappTemplate({ userAdminId, sourceId, stageId: '', sectionType: 1, accountId }).catch(() => null)
-
   let crmContact = await crmContactsModel.findContactByAccountId(accountId)
   if (!crmContact) {
     const contactId = await crmContactsModel.insertContact({
@@ -90,13 +99,15 @@ export async function resolveInboundOwnership({ userAdminId, mobile, countryCode
   }
 
   let leadId = 0
+  let leadStageId = ''
   const existingLeadForAccount = await leadsModel.findLeadByAccountId(accountId)
   if (!existingLeadForAccount) {
     const initialStage = await stagesModel.findInitialLeadStage(userAdminId)
+    leadStageId = initialStage ? String(initialStage.id) : ''
 
     leadId = await leadsModel.insertLead({
       accountId,
-      leadStatus: initialStage ? String(initialStage.id) : '',
+      leadStatus: leadStageId,
       addedBy: jrId,
       userAdminId,
       leadOwner: jrId,
@@ -114,19 +125,10 @@ export async function resolveInboundOwnership({ userAdminId, mobile, countryCode
     })
 
     await activityModel.insertFreshPartyActivity({ jrId, userAdminId, leadId })
-
-    // Same automation trigger, section_type=2 (Lead), now with the real initial stage id.
-    await sendAutomationWhatsappTemplate({
-      userAdminId,
-      sourceId,
-      stageId: initialStage ? initialStage.id : '',
-      sectionType: 2,
-      accountId,
-      leadId,
-    }).catch(() => null)
   } else {
     leadId = existingLeadForAccount.leadId
+    leadStageId = existingLeadForAccount.leadStatus || ''
   }
 
-  return { accountId, leadId, jrId, created: true }
+  return { accountId, leadId, jrId, sourceId, leadStageId, created: true }
 }
