@@ -10,6 +10,14 @@ import { buildConversationSummaryDto } from './conversationsController.js'
 
 const LEGACY_TYPE_TO_AISENSY_MEDIA_TYPE = { I: 'image', V: 'video', A: 'audio', D: 'document' }
 
+const SEND_FAILURE_MESSAGE = {
+  template_not_usable: 'This template is no longer approved for sending.',
+  opted_out_or_missing: 'This contact has opted out (STOP) and cannot be messaged.',
+  variable_mappings_missing: 'This template is missing its variable configuration — contact your admin.',
+  not_aisensy_vendor: "This employee's WhatsApp account is not configured for template sending.",
+  vendor_send_failed: 'WhatsApp rejected this template — it may not be approved yet, or its content may not match what was submitted for approval.',
+}
+
 function toTemplateSummaryDto(template) {
   return {
     id: template.id,
@@ -93,7 +101,7 @@ export async function sendTemplateToConversation(req, res) {
 
   if (!result.sent) {
     const status = result.reason === 'opted_out_or_missing' ? 409 : 422
-    throw new HttpError(status, `Template not sent: ${result.reason}`)
+    throw new HttpError(status, SEND_FAILURE_MESSAGE[result.reason] || 'The template could not be sent. Please try again.')
   }
 
   const dto = toMessageDto(result.message)
