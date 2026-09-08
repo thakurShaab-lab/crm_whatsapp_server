@@ -79,7 +79,7 @@ export async function listThreadMessages(req, res) {
 
   // DB returns newest-first for keyset pagination; the client renders oldest-to-newest.
   const items = page.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId))).reverse()
-  const contact = toContactDto(mobile, account, cname, {
+  const contact = toContactDto(mobile, account, cname || page[0]?.name, {
     countryCode: ctrIdNum ?? page[0]?.countryCode ?? null,
     userAdminId: req.userAdminId,
     wabano: req.waNumber,

@@ -21,6 +21,16 @@ export function mapMsgStatusToTickStatus(msgStatus) {
   return SENT_RESPONSE_STATUS_MAP[msgStatus] || 'sent'
 }
 
+/**
+ * Exactly `whatsapp_chatt_left_sidebar_container.php`'s `$contact_name` resolution:
+ * `!empty($res_contact['name']) and strlen($res_contact['name'])<60` wins, else
+ * `tbl_account.account_name` (legacy aliases it `client_name`), else the phone number.
+ */
+function resolveLegacyContactName(messageName, accountName, mobile) {
+  if (messageName && messageName.length < 60) return messageName
+  return accountName || mobile
+}
+
 /** `sentStatusRow` comes from sentResponseModel.findLatestStatus(s)/findLatestStatusMap — null if none exists yet. */
 function deriveOutboundStatus(row, sentStatusRow) {
   if (sentStatusRow) return mapMsgStatusToTickStatus(sentStatusRow.msgStatus)
@@ -56,15 +66,7 @@ export function toMessageDto(row, sentStatusRow = null) {
 export function toConversationSummaryDto(row, account, sentStatusRow = null, context = {}) {
   return {
     mobile: row.mobile,
-    // This app is used by employees, not clients — an account's business/company name
-    // (accountName, e.g. "Weblink.in Pvt Ltd") never identifies the individual on the
-    // other end. The `name` column on the message row itself is not trustworthy either:
-    // on an outbound row it's the SENDING EMPLOYEE's own name (e.g. "Manish" shows up on
-    // completely unrelated clients' threads because that employee sent all of them), and
-    // on an inbound row it can be an auto-reply/button-click echo of our own WABA account
-    // name. Neither is the client's identity, so the only name source trusted here is the
-    // CRM account's own `contactPersonName` — otherwise just the phone number.
-    name: account?.contactPersonName || row.mobile,
+    name: resolveLegacyContactName(row.name, account?.accountName, row.mobile),
     countryCode: row.countryCode,
     stopService: account ? account.stopService === 'Y' : false,
     unreadCount: Number(row.unreadCount) || 0,
@@ -89,10 +91,10 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
 export function toContactDto(mobile, account, fallbackName, context = {}) {
   return {
     mobile,
-    // Same reasoning as toConversationSummaryDto — only trust the CRM account's own
-    // contactPersonName, or an explicit `fallbackName` the caller supplies (the legacy
-    // `cname` route param) — never a message row's `name`, and never the mobile number.
-    name: account?.contactPersonName || fallbackName || mobile,
+    // `fallbackName` stands in for `res_contact['name']` here — the caller passes the
+    // latest message's own name (or an explicit override, e.g. the legacy `cname` route
+    // param) since this DTO isn't built from a message row directly.
+    name: resolveLegacyContactName(fallbackName, account?.accountName, mobile),
     stopService: account ? account.stopService === 'Y' : false,
     accountId: account?.accountId ?? null,
     for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,

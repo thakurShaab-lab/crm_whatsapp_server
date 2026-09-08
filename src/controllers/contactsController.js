@@ -24,5 +24,5 @@ export async function getContact(req, res) {
     throw new HttpError(404, 'Contact not found')
   }
 
-  res.json(toContactDto(mobile, account, null))
+  res.json(toContactDto(mobile, account, lastMessage?.name))
 }
