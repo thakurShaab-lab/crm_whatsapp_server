@@ -73,6 +73,20 @@ export async function setStopService({ userAdminId, mobile, countryCode, stopSer
     )
 }
 
+/** Bumps `wa_template_count`/`wa_template_sent_dt` and appends `templateId` to the comma-separated `sent_wa_template_id` list, if not already present — exactly the legacy bookkeeping after every template send. */
+export async function recordTemplateSent({ accountId, templateId }) {
+  const [row] = await db.select({ waTemplateCount: account.waTemplateCount, sentWaTemplateId: account.sentWaTemplateId }).from(account).where(eq(account.accountId, accountId)).limit(1)
+  if (!row) return
+
+  const existingIds = row.sentWaTemplateId ? row.sentWaTemplateId.split(',') : []
+  const sentWaTemplateId = existingIds.includes(String(templateId)) ? row.sentWaTemplateId : [...existingIds, templateId].filter(Boolean).join(',')
+
+  await db
+    .update(account)
+    .set({ waTemplateCount: (row.waTemplateCount || 0) + 1, waTemplateSentDt: new Date(), sentWaTemplateId })
+    .where(eq(account.accountId, accountId))
+}
+
 /** For "start a new chat": look up existing CRM accounts by name or phone. */
 export async function searchAccounts({ userAdminId, search, limit = 20 }) {
   const conditions = [eq(account.userAdminId, userAdminId)]

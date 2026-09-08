@@ -6,6 +6,7 @@ import * as leadSourceModel from '../models/leadSourceModel.js'
 import * as stagesModel from '../models/stagesModel.js'
 import * as activityModel from '../models/activityModel.js'
 import * as fbRoutingModel from '../models/fbRoutingModel.js'
+import { sendAutomationWhatsappTemplate } from './templateAutomation.js'
 
 /** Matches PHP's `preg_replace('/^'.$country_code.'/', '', $mobile)` — strips a leading ISD code of any length, not just India's. */
 function stripCountryCode(mobile, countryCode) {
@@ -21,9 +22,8 @@ function stripCountryCode(mobile, countryCode) {
  *
  * Deliberately NOT replicated here (out of scope for this build, or a fix rather
  * than a faithful port):
- * - The two `send_automation_whatsapp_template()` calls (account-created / lead-created)
- *   and the push-notification send — template automation and push notifications are
- *   later, separate build phases.
+ * - The push-notification send (send_mobile_notification_android/ios) — skipped per
+ *   an explicit decision (no FCM credentials configured for this project).
  * - The Facebook-ads-specific `sourceID`/`headline` lead-source branch — this path is
  *   WhatsApp-only, so the lead source is always the "Whatsapp" row.
  * - The legacy `$lead_id` used in the caller's final UPDATE is actually an out-of-scope
@@ -68,6 +68,11 @@ export async function resolveInboundOwnership({ userAdminId, mobile, countryCode
 
   await accountAddressesModel.insertPlaceholderAddress(accountId)
 
+  // "atuo template send code here" (whatsapp_aisense_response.php ~line 1793) — fires
+  // right after account creation, section_type=1 (Customer), no stage yet. Never
+  // allowed to break account/lead creation if the automation lookup or vendor send fails.
+  await sendAutomationWhatsappTemplate({ userAdminId, sourceId, stageId: '', sectionType: 1, accountId }).catch(() => null)
+
   let crmContact = await crmContactsModel.findContactByAccountId(accountId)
   if (!crmContact) {
     const contactId = await crmContactsModel.insertContact({
@@ -109,6 +114,16 @@ export async function resolveInboundOwnership({ userAdminId, mobile, countryCode
     })
 
     await activityModel.insertFreshPartyActivity({ jrId, userAdminId, leadId })
+
+    // Same automation trigger, section_type=2 (Lead), now with the real initial stage id.
+    await sendAutomationWhatsappTemplate({
+      userAdminId,
+      sourceId,
+      stageId: initialStage ? initialStage.id : '',
+      sectionType: 2,
+      accountId,
+      leadId,
+    }).catch(() => null)
   } else {
     leadId = existingLeadForAccount.leadId
   }

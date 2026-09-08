@@ -117,6 +117,17 @@ export async function findMessageBySourceId(sourceId) {
   return row || null
 }
 
+/** Most recent genuine inbound reply from this contact — used to decide whether a utility template still falls in WhatsApp's 24-hour free service window. */
+export async function findLastInboundReply({ mobile, waNumber }) {
+  const [row] = await db
+    .select({ recvDate: messages.recvDate })
+    .from(messages)
+    .where(and(eq(messages.mobile, mobile), eq(messages.waNumber, waNumber), eq(messages.msgtype, 'R')))
+    .orderBy(desc(messages.sl))
+    .limit(1)
+  return row || null
+}
+
 /**
  * Backfills ownership after the fact — exactly the legacy's two-phase flow: a message
  * row is inserted first, then `UPDATE whatsapp_incoming_reply_response SET send_by=...,
