@@ -15,14 +15,15 @@ export async function searchContacts(req, res) {
 export async function getContact(req, res) {
   const { mobile } = req.params
 
-  const [account, lastMessage] = await Promise.all([
+  const [account, lastMessage, outboundName] = await Promise.all([
     accountModel.findAccountByPhone({ userAdminId: req.userAdminId, mobile, countryCode: '91' }),
     messagesModel.getConversationSummary({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
+    messagesModel.findLatestOutboundName({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
   ])
 
   if (!account && !lastMessage) {
     throw new HttpError(404, 'Contact not found')
   }
 
-  res.json(toContactDto(mobile, account, lastMessage?.name))
+  res.json(toContactDto(mobile, account, null, { outboundName }))
 }

@@ -58,9 +58,12 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
     mobile: row.mobile,
     // This app is used by employees, not clients — an account's business/company name
     // (accountName, e.g. "Weblink.in Pvt Ltd") doesn't identify which individual is on
-    // the other end, so it's deliberately skipped in favor of the client's own name or
-    // their number.
-    name: account?.contactPersonName || row.name || row.mobile,
+    // the other end. The raw name off the latest message row is skipped too: for some
+    // legacy inbound rows (auto-reply/button-click echoes) that column logs our own WABA
+    // account's name instead of the client's. `context.outboundName` — the name recorded
+    // on the client's own latest OUTBOUND row — is a more reliable identity signal since
+    // it comes from CRM lead data about them, not an echoed inbound payload.
+    name: account?.contactPersonName || context.outboundName || row.mobile,
     countryCode: row.countryCode,
     stopService: account ? account.stopService === 'Y' : false,
     unreadCount: Number(row.unreadCount) || 0,
@@ -85,8 +88,10 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
 export function toContactDto(mobile, account, fallbackName, context = {}) {
   return {
     mobile,
-    // Same reasoning as toConversationSummaryDto — skip the business/account name.
-    name: account?.contactPersonName || fallbackName || mobile,
+    // Same reasoning as toConversationSummaryDto — skip the business/account name. An
+    // explicit `fallbackName` (e.g. the legacy `cname` route param) still wins over the
+    // message-history-derived `context.outboundName` when the caller supplies one.
+    name: account?.contactPersonName || fallbackName || context.outboundName || mobile,
     stopService: account ? account.stopService === 'Y' : false,
     accountId: account?.accountId ?? null,
     for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,

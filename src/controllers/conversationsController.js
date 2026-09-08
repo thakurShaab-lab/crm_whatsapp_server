@@ -11,11 +11,12 @@ const PAGE_SIZE = 30
 export async function buildConversationSummaryDto({ userAdminId, waNumber, mobile }) {
   const row = await messagesModel.getConversationSummary({ userAdminId, waNumber, mobile })
   if (!row) return null
-  const [account, sentStatus] = await Promise.all([
+  const [account, sentStatus, outboundName] = await Promise.all([
     accountModel.findAccountByPhone({ userAdminId, mobile, countryCode: row.countryCode }),
     row.sourceId ? sentResponseModel.findLatestStatus(row.sourceId) : null,
+    messagesModel.findLatestOutboundName({ userAdminId, waNumber, mobile }),
   ])
-  return toConversationSummaryDto(row, account, sentStatus, { userAdminId, wabano: waNumber })
+  return toConversationSummaryDto(row, account, sentStatus, { userAdminId, wabano: waNumber, outboundName })
 }
 
 export async function listConversations(req, res) {
@@ -36,8 +37,15 @@ export async function listConversations(req, res) {
   const page = hasMore ? rows.slice(0, pageSize) : rows
   const last = page[page.length - 1]
 
-  // Batched so a page of conversations never does one status lookup per row.
-  const sentStatusMap = await sentResponseModel.findLatestStatusMap(page.map((row) => row.sourceId))
+  // Batched so a page of conversations never does one status/name lookup per row.
+  const [sentStatusMap, outboundNameMap] = await Promise.all([
+    sentResponseModel.findLatestStatusMap(page.map((row) => row.sourceId)),
+    messagesModel.findLatestOutboundNameMap({
+      userAdminId: req.userAdminId,
+      waNumber: req.waNumber,
+      mobiles: page.map((row) => row.mobile),
+    }),
+  ])
 
   const items = await Promise.all(
     page.map(async (row) => {
@@ -49,6 +57,7 @@ export async function listConversations(req, res) {
       return toConversationSummaryDto(row, account, sentStatusMap.get(row.sourceId), {
         userAdminId: req.userAdminId,
         wabano: req.waNumber,
+        outboundName: outboundNameMap.get(row.mobile),
       })
     }),
   )
