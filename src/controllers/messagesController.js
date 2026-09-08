@@ -74,12 +74,8 @@ export async function listThreadMessages(req, res) {
     }
   }
 
-  // Batched so a page of messages never does one status/name lookup per row.
-  const [sentStatusMap, outboundName, employeePhoneSuffixes] = await Promise.all([
-    sentResponseModel.findLatestStatusMap(page.map((row) => row.sourceId)),
-    messagesModel.findLatestOutboundName({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
-    employeesModel.getEmployeePhoneSuffixes(),
-  ])
+  // Batched so a page of messages never does one status lookup per row.
+  const sentStatusMap = await sentResponseModel.findLatestStatusMap(page.map((row) => row.sourceId))
 
   // DB returns newest-first for keyset pagination; the client renders oldest-to-newest.
   const items = page.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId))).reverse()
@@ -87,8 +83,6 @@ export async function listThreadMessages(req, res) {
     countryCode: ctrIdNum ?? page[0]?.countryCode ?? null,
     userAdminId: req.userAdminId,
     wabano: req.waNumber,
-    outboundName,
-    isEmployeeMobile: employeesModel.isEmployeeMobile(mobile, employeePhoneSuffixes),
   })
 
   res.json({ items, nextCursor, contact })

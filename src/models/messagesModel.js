@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lt, or, like, max, count, inArray } from 'drizzle-orm'
+import { and, desc, eq, gt, lt, or, like, max, count } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { messages } from '../schema/messages.js'
 
@@ -75,35 +75,6 @@ export async function listConversations({ userAdminId, waNumber, search, unreadO
 
   const rows = await query.orderBy(desc(latest.maxRecvDate), desc(latest.mobile)).limit(limit + 1)
   return rows
-}
-
-/**
- * Name recorded on each contact's own latest OUTBOUND row, batched across many mobiles
- * in one query. Used as a display-name fallback in place of "whichever row is newest
- * regardless of direction": some legacy inbound rows (auto-reply/button-click echoes)
- * log our own WABA account's name instead of the client's, while the name on an
- * outbound row comes from real CRM lead data about the client.
- */
-export async function findLatestOutboundNameMap({ userAdminId, waNumber, mobiles }) {
-  const list = [...new Set(mobiles.filter(Boolean))]
-  if (list.length === 0) return new Map()
-
-  const rows = await db
-    .select({ mobile: messages.mobile, name: messages.name, sl: messages.sl })
-    .from(messages)
-    .where(and(...scope({ userAdminId, waNumber }), eq(messages.msgtype, 'S'), inArray(messages.mobile, list)))
-    .orderBy(desc(messages.sl))
-
-  const result = new Map()
-  for (const row of rows) {
-    if (!result.has(row.mobile)) result.set(row.mobile, row.name)
-  }
-  return result
-}
-
-export async function findLatestOutboundName({ userAdminId, waNumber, mobile }) {
-  const map = await findLatestOutboundNameMap({ userAdminId, waNumber, mobiles: [mobile] })
-  return map.get(mobile) || null
 }
 
 /** Latest message + unread count for exactly one contact — used to refresh the sidebar after a new message/status change. */

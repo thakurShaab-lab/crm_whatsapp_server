@@ -22,23 +22,6 @@ export async function findEmployeeByWabaNo(wabaNo) {
   return row || null
 }
 
-/**
- * All configured employees' own personal phone numbers, as last-10-digit suffixes
- * (the column is stored without a country-code prefix, while conversation mobiles vary
- * in whether they carry one). A conversation whose mobile matches one of these is an
- * internal test/support contact — the employee messaging their own WABA — not a real
- * client, so no name derived from it (CRM lead data, WhatsApp profile name) is a
- * trustworthy client identity.
- */
-export async function getEmployeePhoneSuffixes() {
-  const rows = await db.select({ phoneNumber: employees.phoneNumber }).from(employees)
-  return new Set(rows.filter((row) => row.phoneNumber).map((row) => row.phoneNumber.slice(-10)))
-}
-
-export function isEmployeeMobile(mobile, phoneSuffixes) {
-  return phoneSuffixes.has(String(mobile).slice(-10))
-}
-
 /** Persists a refreshed AiSensy token, exactly matching legacy's WHERE clause (self or anyone this employee created). */
 export async function updateWhatsappToken({ empId, token, tokenExpiresAt }) {
   await db
