@@ -5,6 +5,7 @@ import { asyncHandler } from '../middleware/asyncHandler.js'
 import conversationsRoutes from './conversations.routes.js'
 import messagesRoutes from './messages.routes.js'
 import contactsRoutes from './contacts.routes.js'
+import templatesRoutes from './templates.routes.js'
 import webhooksRoutes from './webhooks.routes.js'
 import devRoutes from './dev.routes.js'
 
@@ -20,6 +21,7 @@ router.use(asyncHandler(agentContext))
 router.use('/conversations', conversationsRoutes)
 router.use('/conversations/:mobile/messages', messagesRoutes)
 router.use('/contacts', contactsRoutes)
+router.use('/templates', templatesRoutes)
 
 if (config.env !== 'production') {
   router.use('/dev', devRoutes)

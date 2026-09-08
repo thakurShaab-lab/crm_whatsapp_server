@@ -1,13 +1,13 @@
 import * as accountModel from '../models/accountModel.js'
 import * as messagesModel from '../models/messagesModel.js'
-import { toContactDto } from '../utils/mappers.js'
+import { toContactDto, isWindowExpired } from '../utils/mappers.js'
 import { HttpError } from '../middleware/errorHandler.js'
 
 export async function searchContacts(req, res) {
   const rows = await accountModel.searchAccounts({ userAdminId: req.userAdminId, search: req.query.search })
   res.json({
     items: rows.map((row) =>
-      toContactDto(row.phone, row, { userAdminId: req.userAdminId, wabano: req.waNumber }),
+      toContactDto(row.phone, row, null, { userAdminId: req.userAdminId, wabano: req.waNumber }),
     ),
   })
 }
@@ -15,14 +15,15 @@ export async function searchContacts(req, res) {
 export async function getContact(req, res) {
   const { mobile } = req.params
 
-  const [account, lastMessage] = await Promise.all([
+  const [account, lastMessage, lastInboundReply] = await Promise.all([
     accountModel.findAccountByPhone({ userAdminId: req.userAdminId, mobile, countryCode: '91' }),
     messagesModel.getConversationSummary({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
+    messagesModel.findLastInboundReply({ mobile, waNumber: req.waNumber }),
   ])
 
   if (!account && !lastMessage) {
     throw new HttpError(404, 'Contact not found')
   }
 
-  res.json(toContactDto(mobile, account))
+  res.json(toContactDto(mobile, account, null, { windowExpired: isWindowExpired(lastInboundReply) }))
 }

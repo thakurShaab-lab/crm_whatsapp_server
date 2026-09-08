@@ -21,6 +21,13 @@ export function mapMsgStatusToTickStatus(msgStatus) {
   return SENT_RESPONSE_STATUS_MAP[msgStatus] || 'sent'
 }
 
+/** Same 24h-window rule as templateAutomation.js's `resolvePaidTemplateFlag`: no prior reply at all, or the last one being over 24h old, both mean the window is closed. `lastReply` comes from `messagesModel.findLastInboundReply`. */
+export function isWindowExpired(lastReply) {
+  if (!lastReply) return true
+  const diffHours = (Date.now() - new Date(lastReply.recvDate).getTime()) / 3_600_000
+  return diffHours > 24
+}
+
 /** `sentStatusRow` comes from sentResponseModel.findLatestStatus(s)/findLatestStatusMap — null if none exists yet. */
 function deriveOutboundStatus(row, sentStatusRow) {
   if (sentStatusRow) return mapMsgStatusToTickStatus(sentStatusRow.msgStatus)
@@ -93,5 +100,9 @@ export function toContactDto(mobile, account, fallbackName, context = {}) {
     countryCode: context.countryCode ?? null,
     userAdminId: context.userAdminId ?? null,
     wabano: context.wabano ?? null,
+    // True once WhatsApp's 24h customer-service window has closed since this
+    // contact's last real inbound message (or they've never messaged at all) —
+    // only a pre-approved template can be sent past this point.
+    windowExpired: context.windowExpired ?? false,
   }
 }

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import { z } from 'zod'
 import * as messagesController from '../controllers/messagesController.js'
+import * as templatesController from '../controllers/templatesController.js'
 import { asyncHandler } from '../middleware/asyncHandler.js'
 import { validate } from '../middleware/validate.js'
 import { config } from '../config/index.js'
@@ -47,6 +48,17 @@ router.post(
   upload.array('files', 10),
   validate({ body: z.object({ text: z.string().max(4096).optional() }) }),
   asyncHandler(messagesController.sendMessage),
+)
+
+// "Send Approved Template" popup — sends a pre-approved WhatsApp template past the
+// 24h customer-service window. `file` (optional) overrides the template's own
+// configured media for this one send; `manualValues` is a JSON string since
+// multipart form fields are always strings.
+router.post(
+  '/template',
+  upload.single('file'),
+  validate({ body: z.object({ templateId: z.coerce.number().int(), manualValues: z.string().optional() }) }),
+  asyncHandler(templatesController.sendTemplateToConversation),
 )
 
 export default router

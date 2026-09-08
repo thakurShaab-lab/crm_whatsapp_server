@@ -7,7 +7,7 @@ const AISENSY_NETCORE_ATTACHMENT_TYPE = { image: 'image', video: 'video', audio:
 const GUPSHUP_ATTACHMENT_TYPE = { image: 'IMAGE', video: 'VIDEO', audio: 'AUDIO', document: 'DOCUMENT' }
 const GUPSHUP_FILE_TYPE_LABEL = { image: 'Image', video: 'Video', audio: 'Audio', document: 'Document' }
 
-function requirePublicMediaUrl(relativeUrl) {
+export function requirePublicMediaUrl(relativeUrl) {
   if (!config.publicMediaBaseUrl) {
     throw new Error(
       'Cannot send media: PUBLIC_MEDIA_BASE_URL is not configured. Vendor APIs fetch attachments themselves ' +

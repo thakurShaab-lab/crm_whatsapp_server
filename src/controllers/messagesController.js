@@ -7,7 +7,7 @@ import { sendMessage as sendVendorMessage } from '../vendors/vendorAdapter.js'
 import { storeUploadedFiles } from '../utils/mediaStorage.js'
 import { sanitizePlainText } from '../utils/sanitize.js'
 import { getIsdFromMobile } from '../utils/isdCodes.js'
-import { toMessageDto, toContactDto, USER_TYPE_TO_FOR } from '../utils/mappers.js'
+import { toMessageDto, toContactDto, USER_TYPE_TO_FOR, isWindowExpired } from '../utils/mappers.js'
 import { encodeCursor, decodeCursor } from '../utils/pagination.js'
 import { HttpError } from '../middleware/errorHandler.js'
 import { emitNewMessage } from '../socket/emitters.js'
@@ -75,14 +75,18 @@ export async function listThreadMessages(req, res) {
   }
 
   // Batched so a page of messages never does one status lookup per row.
-  const sentStatusMap = await sentResponseModel.findLatestStatusMap(page.map((row) => row.sourceId))
+  const [sentStatusMap, lastInboundReply] = await Promise.all([
+    sentResponseModel.findLatestStatusMap(page.map((row) => row.sourceId)),
+    messagesModel.findLastInboundReply({ mobile, waNumber: req.waNumber }),
+  ])
 
   // DB returns newest-first for keyset pagination; the client renders oldest-to-newest.
   const items = page.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId))).reverse()
-  const contact = toContactDto(mobile, account, {
+  const contact = toContactDto(mobile, account, null, {
     countryCode: ctrIdNum ?? page[0]?.countryCode ?? null,
     userAdminId: req.userAdminId,
     wabano: req.waNumber,
+    windowExpired: isWindowExpired(lastInboundReply),
   })
 
   res.json({ items, nextCursor, contact })
