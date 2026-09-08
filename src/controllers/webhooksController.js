@@ -12,6 +12,7 @@ import { findEmployeeById, findEmployeeByWabaNo } from '../models/employeesModel
 import { parseAiSensyWebhook } from '../vendors/aisensyInbound.js'
 import { resolveInboundOwnership } from '../services/leadAutoCreation.js'
 import { sendAutoTextSafely } from '../services/outboundSend.js'
+import { processInboundForJourney } from '../services/journeyEngine.js'
 import * as companyDetailsModel from '../models/companyDetailsModel.js'
 import { config } from '../config/index.js'
 
@@ -151,6 +152,8 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
       leadId: ownership.leadId,
     })
 
+    const employee = await findEmployeeById(userAdminId)
+
     // "Chk Auto Response Message" (whatsapp_aisense_response.php ~line 1898): a
     // per-employee canned auto-reply, sent on every inbound message when configured
     // and enabled — opt-in (autoRespDisp defaults to 'P', not 'Y'), so this is a
@@ -158,7 +161,6 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
     // the real inbound message it's replying to.
     const autoResponseText = await companyDetailsModel.findEnabledAutoResponse(userAdminId)
     if (autoResponseText) {
-      const employee = await findEmployeeById(userAdminId)
       sendAutoTextSafely({
         employee,
         userAdminId,
@@ -168,6 +170,19 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
         text: autoResponseText,
         accountId: ownership.accountId,
       })
+    }
+
+    // Journey/chatbot engine — AiSensy-only in legacy, same as this whole webhook file.
+    if (employee?.whatsappVendor === 'A') {
+      await processInboundForJourney({
+        employee,
+        userAdminId,
+        jrId: ownership.jrId,
+        wabaNumber: waNumber,
+        clientMobile: contact.mobile,
+        clientName: contact.name || contact.mobile,
+        receivedText: message.type === 'text' || message.type === 'button' ? message.text : '',
+      }).catch(() => {}) // A broken journey step must never break receipt of the real inbound message.
     }
   }
 
