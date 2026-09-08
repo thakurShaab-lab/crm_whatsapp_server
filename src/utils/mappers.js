@@ -56,8 +56,11 @@ export function toMessageDto(row, sentStatusRow = null) {
 export function toConversationSummaryDto(row, account, sentStatusRow = null, context = {}) {
   return {
     mobile: row.mobile,
-    // Never a name — always the mobile number straight off whatsapp_incoming_reply_response.
-    name: row.mobile,
+    // This app is used by employees, not clients — an account's business/company name
+    // (accountName, e.g. "Weblink.in Pvt Ltd") doesn't identify which individual is on
+    // the other end, so it's deliberately skipped in favor of the client's own name or
+    // their number.
+    name: account?.contactPersonName || row.name || row.mobile,
     countryCode: row.countryCode,
     stopService: account ? account.stopService === 'Y' : false,
     unreadCount: Number(row.unreadCount) || 0,
@@ -79,11 +82,11 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
   }
 }
 
-export function toContactDto(mobile, account, context = {}) {
+export function toContactDto(mobile, account, fallbackName, context = {}) {
   return {
     mobile,
-    // Never a name — always the mobile number.
-    name: mobile,
+    // Same reasoning as toConversationSummaryDto — skip the business/account name.
+    name: account?.contactPersonName || fallbackName || mobile,
     stopService: account ? account.stopService === 'Y' : false,
     accountId: account?.accountId ?? null,
     for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,
