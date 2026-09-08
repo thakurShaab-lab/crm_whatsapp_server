@@ -25,7 +25,7 @@ const PAGE_SIZE = 50
  */
 export async function listThreadMessages(req, res) {
   const { mobile } = req.params
-  const { cursor, limit, ctrId, for: forType, refid, cname, wanum, useradminid, wabano } = req.query
+  const { cursor, limit, ctrId, for: forType, refid, wanum, useradminid, wabano } = req.query
 
   // Route-level `validate()` coerces these via zod, but Express re-derives `req.query`
   // as fresh strings on every access, so the coercion doesn't survive — re-coerce here,
@@ -79,7 +79,7 @@ export async function listThreadMessages(req, res) {
 
   // DB returns newest-first for keyset pagination; the client renders oldest-to-newest.
   const items = page.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId))).reverse()
-  const contact = toContactDto(mobile, account, cname || page[0]?.name, {
+  const contact = toContactDto(mobile, account, {
     countryCode: ctrIdNum ?? page[0]?.countryCode ?? null,
     userAdminId: req.userAdminId,
     wabano: req.waNumber,

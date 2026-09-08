@@ -21,16 +21,6 @@ export function mapMsgStatusToTickStatus(msgStatus) {
   return SENT_RESPONSE_STATUS_MAP[msgStatus] || 'sent'
 }
 
-/**
- * Exactly `whatsapp_chatt_left_sidebar_container.php`'s `$contact_name` resolution:
- * `!empty($res_contact['name']) and strlen($res_contact['name'])<60` wins, else
- * `tbl_account.account_name` (legacy aliases it `client_name`), else the phone number.
- */
-function resolveLegacyContactName(messageName, accountName, mobile) {
-  if (messageName && messageName.length < 60) return messageName
-  return accountName || mobile
-}
-
 /** `sentStatusRow` comes from sentResponseModel.findLatestStatus(s)/findLatestStatusMap — null if none exists yet. */
 function deriveOutboundStatus(row, sentStatusRow) {
   if (sentStatusRow) return mapMsgStatusToTickStatus(sentStatusRow.msgStatus)
@@ -66,7 +56,8 @@ export function toMessageDto(row, sentStatusRow = null) {
 export function toConversationSummaryDto(row, account, sentStatusRow = null, context = {}) {
   return {
     mobile: row.mobile,
-    name: resolveLegacyContactName(row.name, account?.accountName, row.mobile),
+    // Never a name — always the mobile number straight off whatsapp_incoming_reply_response.
+    name: row.mobile,
     countryCode: row.countryCode,
     stopService: account ? account.stopService === 'Y' : false,
     unreadCount: Number(row.unreadCount) || 0,
@@ -88,13 +79,11 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
   }
 }
 
-export function toContactDto(mobile, account, fallbackName, context = {}) {
+export function toContactDto(mobile, account, context = {}) {
   return {
     mobile,
-    // `fallbackName` stands in for `res_contact['name']` here — the caller passes the
-    // latest message's own name (or an explicit override, e.g. the legacy `cname` route
-    // param) since this DTO isn't built from a message row directly.
-    name: resolveLegacyContactName(fallbackName, account?.accountName, mobile),
+    // Never a name — always the mobile number.
+    name: mobile,
     stopService: account ? account.stopService === 'Y' : false,
     accountId: account?.accountId ?? null,
     for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,
