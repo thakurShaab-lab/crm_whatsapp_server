@@ -62,8 +62,11 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
     // legacy inbound rows (auto-reply/button-click echoes) that column logs our own WABA
     // account's name instead of the client's. `context.outboundName` — the name recorded
     // on the client's own latest OUTBOUND row — is a more reliable identity signal since
-    // it comes from CRM lead data about them, not an echoed inbound payload.
-    name: account?.contactPersonName || context.outboundName || row.mobile,
+    // it comes from CRM lead data about them, not an echoed inbound payload. But when the
+    // mobile itself is a configured employee's own phone (`context.isEmployeeMobile`),
+    // there's no client at all — it's an internal test/support conversation — so skip
+    // every name source and just show the number.
+    name: context.isEmployeeMobile ? row.mobile : account?.contactPersonName || context.outboundName || row.mobile,
     countryCode: row.countryCode,
     stopService: account ? account.stopService === 'Y' : false,
     unreadCount: Number(row.unreadCount) || 0,
@@ -88,10 +91,11 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
 export function toContactDto(mobile, account, fallbackName, context = {}) {
   return {
     mobile,
-    // Same reasoning as toConversationSummaryDto — skip the business/account name. An
-    // explicit `fallbackName` (e.g. the legacy `cname` route param) still wins over the
-    // message-history-derived `context.outboundName` when the caller supplies one.
-    name: account?.contactPersonName || fallbackName || context.outboundName || mobile,
+    // Same reasoning as toConversationSummaryDto — skip the business/account name, and
+    // skip every name source for an employee's own phone number (no real client there).
+    // An explicit `fallbackName` (e.g. the legacy `cname` route param) still wins over
+    // the message-history-derived `context.outboundName` when the caller supplies one.
+    name: context.isEmployeeMobile ? mobile : account?.contactPersonName || fallbackName || context.outboundName || mobile,
     stopService: account ? account.stopService === 'Y' : false,
     accountId: account?.accountId ?? null,
     for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,
