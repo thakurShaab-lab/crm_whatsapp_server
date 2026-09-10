@@ -25,4 +25,11 @@ router.post(
   asyncHandler(conversationsController.markRead),
 )
 
+// Hard delete — permanently removes the conversation's messages, no undo.
+router.delete(
+  '/:mobile',
+  validate({ params: z.object({ mobile: z.string().min(1) }) }),
+  asyncHandler(conversationsController.deleteConversation),
+)
+
 export default router

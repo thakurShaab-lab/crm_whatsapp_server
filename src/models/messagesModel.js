@@ -137,6 +137,26 @@ export async function countInboundMessages({ userAdminId, waNumber, mobile }) {
   return Number(row?.total || 0)
 }
 
+/** Every `source_id` this conversation's messages carry — used to also clean up their tick-status rows on a hard delete. */
+export async function findSourceIdsForConversation({ userAdminId, waNumber, mobile }) {
+  const rows = await db
+    .select({ sourceId: messages.sourceId })
+    .from(messages)
+    .where(and(...scope({ userAdminId, waNumber }), eq(messages.mobile, mobile)))
+  return rows.map((row) => row.sourceId).filter(Boolean)
+}
+
+/**
+ * Permanently deletes every message row for this conversation — a real, irreversible
+ * DELETE (not a hide/soft-delete flag), scoped exactly like every other query here
+ * (userAdminId + waNumber + mobile) so it can never reach another tenant's or
+ * another WABA's rows. Returns the number of rows removed.
+ */
+export async function deleteConversation({ userAdminId, waNumber, mobile }) {
+  const result = await db.delete(messages).where(and(...scope({ userAdminId, waNumber }), eq(messages.mobile, mobile)))
+  return Array.isArray(result) ? result[0].affectedRows : result.affectedRows
+}
+
 /**
  * Backfills ownership after the fact — exactly the legacy's two-phase flow: a message
  * row is inserted first, then `UPDATE whatsapp_incoming_reply_response SET send_by=...,

@@ -3,7 +3,7 @@ import * as accountModel from '../models/accountModel.js'
 import * as sentResponseModel from '../models/sentResponseModel.js'
 import { toConversationSummaryDto } from '../utils/mappers.js'
 import { encodeCursor, decodeCursor } from '../utils/pagination.js'
-import { emitConversationRead } from '../socket/emitters.js'
+import { emitConversationRead, emitConversationDeleted } from '../socket/emitters.js'
 
 const PAGE_SIZE = 30
 
@@ -71,4 +71,20 @@ export async function markRead(req, res) {
   }
 
   res.json({ mobile, readAt, messageIds })
+}
+
+/**
+ * Hard delete — permanently removes every message (and their tick-status rows) for
+ * this conversation. Irreversible: there is no separate "deleted" flag, and no undo.
+ */
+export async function deleteConversation(req, res) {
+  const { mobile } = req.params
+  const { userAdminId, waNumber } = req
+
+  const sourceIds = await messagesModel.findSourceIdsForConversation({ userAdminId, waNumber, mobile })
+  await sentResponseModel.deleteByExternalIds(sourceIds)
+  const deletedCount = await messagesModel.deleteConversation({ userAdminId, waNumber, mobile })
+
+  emitConversationDeleted(waNumber, { mobile })
+  res.json({ mobile, deletedCount })
 }

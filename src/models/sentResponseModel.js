@@ -37,6 +37,13 @@ export async function findLatestStatus(sourceId) {
   return map.get(sourceId) || null
 }
 
+/** Permanently removes every delivery-status row tied to the given message source ids — used when hard-deleting a conversation, so no orphaned tick-status rows are left behind. */
+export async function deleteByExternalIds(sourceIds) {
+  const ids = [...new Set(sourceIds.filter(Boolean))]
+  if (ids.length === 0) return
+  await db.delete(sentResponse).where(inArray(sentResponse.externalId, ids))
+}
+
 /** Appends a new delivery-status row — mirrors how the real vendor webhook feed writes this table. */
 export async function insertStatusEvent({ externalId, phoneNo, msgStatus, statusRemark = '', statusCode, vendorType, occurredAt }) {
   await db.insert(sentResponse).values({
