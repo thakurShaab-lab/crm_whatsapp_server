@@ -31,6 +31,45 @@ function toTemplateSummaryDto(template) {
   }
 }
 
+/**
+ * Mirrors ajax_response.php's `get_label_by_whatsapp_template` truncation: the
+ * template's own attached filename shown next to "is attached" is cut to 20 chars
+ * (dropping the extension) when the name itself is long, otherwise shown in full
+ * with its extension.
+ */
+function shortenMediaFilename(filename) {
+  if (!filename) return null
+  const dot = filename.lastIndexOf('.')
+  const name = dot >= 0 ? filename.slice(0, dot) : filename
+  const ext = dot >= 0 ? filename.slice(dot + 1) : ''
+  if (name.length > 20) return `${name.slice(0, 20)}...`
+  return ext ? `${name}.${ext}` : name
+}
+
+/**
+ * Only these three `sec_type_field_name` values ever get a real, user-editable
+ * input in the legacy popup — every other variable (whatever its prefix) is always
+ * auto-resolved from CRM data and rendered readonly with an "Auto Fetch"
+ * placeholder. See ajax_response.php's `get_label_by_whatsapp_template`.
+ */
+const VARIABLE_KIND_BY_FIELD_NAME = {
+  'other~other_text': 'text',
+  'other~other_time': 'time',
+  'other~other_date': 'date',
+}
+
+function toVariableDto(row) {
+  const kind = VARIABLE_KIND_BY_FIELD_NAME[row.secTypeFieldName] || 'readonly'
+  return {
+    id: row.id,
+    vid: row.vid,
+    label: row.variableName,
+    editable: kind !== 'readonly',
+    inputType: kind === 'date' ? 'date' : 'text',
+    placeholder: kind === 'text' ? row.variableName : kind === 'time' ? 'HH:MM' : 'Auto Fetch',
+  }
+}
+
 /** GET /api/templates — every approved template this employee can pick from in the "Send Approved Template" popup. */
 export async function listTemplates(req, res) {
   const templates = await manageWhstappTemplateModel.findApprovedForEmployee(req.userAdminId)
@@ -39,9 +78,14 @@ export async function listTemplates(req, res) {
 
 /**
  * GET /api/templates/:id — one template's full detail plus its `{{N}}` placeholder
- * list, each annotated with whether it needs a manually-typed value ('other'
- * prefix) or is always auto-resolved from CRM data on send (every other prefix) —
- * the popup only ever renders an input for the former.
+ * list, each annotated with whether it needs a manually-typed value (only
+ * 'other~other_text'/'other~other_time'/'other~other_date' do) or is always
+ * auto-resolved from CRM data on send — the popup renders every variable as a
+ * field, but only the editable ones accept typing (see toVariableDto above).
+ * Also carries the media box's own state: whether this template has media at
+ * all, its own already-configured file (if any), and whether it's an
+ * invoice-attachment template (which shows a read-only "Auto Fetch" field
+ * instead of an upload box, exactly like legacy).
  */
 export async function getTemplateDetail(req, res) {
   const templateId = Number(req.params.id)
@@ -51,12 +95,16 @@ export async function getTemplateDetail(req, res) {
   }
 
   const variableRows = await templateVariableNameModel.findForTemplate(templateId)
-  const variables = variableRows.map((row) => {
-    const [prefix] = (row.secTypeFieldName || '').split('~')
-    return { id: row.id, vid: row.vid, label: row.variableName, editable: prefix === 'other' }
-  })
+  const variables = variableRows.map(toVariableDto)
 
-  res.json({ ...toTemplateSummaryDto(template), variables })
+  res.json({
+    ...toTemplateSummaryDto(template),
+    variables,
+    isInvoiceTemplate: template.invoiceTemplate === 'Y',
+    mediaFilename: template.mediaFilename || null,
+    mediaFilenameShort: shortenMediaFilename(template.mediaFilename),
+    vendorMediaUrl: template.vendorMediaUrl || null,
+  })
 }
 
 /**
