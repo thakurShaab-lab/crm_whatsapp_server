@@ -3,7 +3,7 @@ import * as sentResponseModel from '../models/sentResponseModel.js'
 import * as accountModel from '../models/accountModel.js'
 import * as logModel from '../models/logModel.js'
 import { toMessageDto, mapMsgStatusToTickStatus, TICK_STATUS_TO_MSG_STATUS } from '../utils/mappers.js'
-import { sanitizePlainText } from '../utils/sanitize.js'
+import { sanitizePlainText, sanitizeCaption } from '../utils/sanitize.js'
 import { HttpError } from '../middleware/errorHandler.js'
 import { emitNewMessage, emitStatusUpdate, emitConversationRead } from '../socket/emitters.js'
 import { isContactActive } from '../socket/activeSubscriptions.js'
@@ -106,6 +106,12 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
     mobile: contact.mobile,
     type: INBOUND_TYPE_TO_LEGACY[message.type] || 'T',
     text: message.type === 'text' || message.type === 'button' ? sanitizePlainText(message.text) : message.filename || '',
+    // WhatsApp-style caption sent alongside this media message, if any (never set
+    // for a plain text message) — reuses the existing (dormant, utf8mb4)
+    // `actual_name` column rather than a new one. See mappers.js's toMessageDto
+    // for how this is surfaced back to the client as `message.text` on an
+    // image/video/document bubble.
+    actualName: sanitizeCaption(message.caption),
     waNumber,
     accountId: 0,
     sendBy: config.defaultEmployeeId,

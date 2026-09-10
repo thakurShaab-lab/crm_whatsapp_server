@@ -43,3 +43,19 @@ export function normalizeLegacyText(text) {
   if (!text) return text
   return text.replace(/<br\s*\/?>/gi, '\n')
 }
+
+/**
+ * A media message's WhatsApp-style caption is stored in `actual_name`
+ * (`varchar(255)`, see messagesController.js's sendOne / webhooksController.js's
+ * processInboundMessage) — a real column limit, unlike `sanitizePlainText`'s
+ * generous default. `String.prototype.slice` counts UTF-16 code units, so a plain
+ * `.slice(0, 255)` could cut a surrogate pair in half and corrupt the last
+ * character of a long caption (most emoji are 2 code units); `Array.from` iterates
+ * by code point instead, so truncation always lands on a whole character.
+ */
+export function sanitizeCaption(text, maxLength = 255) {
+  const cleaned = sanitizePlainText(text, Number.POSITIVE_INFINITY).trim()
+  if (!cleaned) return null
+  const codePoints = Array.from(cleaned)
+  return codePoints.length <= maxLength ? cleaned : codePoints.slice(0, maxLength).join('')
+}

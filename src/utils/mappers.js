@@ -45,7 +45,13 @@ export function toMessageDto(row, sentStatusRow = null) {
     mobile: row.mobile,
     direction,
     type,
-    text: isMedia ? null : normalizeLegacyText(row.text),
+    // For a media message this is its WhatsApp-style caption — stored in the
+    // existing (previously dormant, utf8mb4) `actual_name` column, deliberately
+    // not `row.text`, which for media rows holds the file's own original filename
+    // instead (exposed below as `media.filename`). The existing image/video/
+    // document bubble components already render `message.text` as a caption
+    // beneath the media when present, so this is the only mapping change rendering needs.
+    text: isMedia ? normalizeLegacyText(row.actualName) : normalizeLegacyText(row.text),
     media: isMedia
       ? {
           url: row.imageUrl || null,

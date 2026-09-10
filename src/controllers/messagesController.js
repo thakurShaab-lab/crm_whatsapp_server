@@ -5,11 +5,12 @@ import * as sentResponseModel from '../models/sentResponseModel.js'
 import * as employeesModel from '../models/employeesModel.js'
 import { sendMessage as sendVendorMessage } from '../vendors/vendorAdapter.js'
 import { storeUploadedFiles } from '../utils/mediaStorage.js'
-import { sanitizePlainText } from '../utils/sanitize.js'
+import { sanitizePlainText, sanitizeCaption } from '../utils/sanitize.js'
 import { getIsdFromMobile } from '../utils/isdCodes.js'
 import { toMessageDto, toContactDto, USER_TYPE_TO_FOR, isWindowExpired } from '../utils/mappers.js'
 import { encodeCursor, decodeCursor } from '../utils/pagination.js'
 import { computeDateWindow } from '../utils/dateWindow.js'
+import { buildSendPlan } from '../utils/sendPlan.js'
 import { HttpError } from '../middleware/errorHandler.js'
 import { emitNewMessage } from '../socket/emitters.js'
 import { buildConversationSummaryDto } from './conversationsController.js'
@@ -117,7 +118,7 @@ export async function listThreadMessages(req, res) {
  * same send is also mirrored into that employee's own thread as a received message.
  * Legacy only does this from the AiSensy/Netcore send path, not Gupshup's.
  */
-async function mirrorForOppositeWaba({ mobile, legacyType, text, media, sourceId, ctrId, accountId, senderName }) {
+async function mirrorForOppositeWaba({ mobile, legacyType, text, media, caption, sourceId, ctrId, accountId, senderName }) {
   const otherEmployee = await employeesModel.findEmployeeByWabaNo(mobile)
   if (!otherEmployee) return
 
@@ -128,6 +129,9 @@ async function mirrorForOppositeWaba({ mobile, legacyType, text, media, sourceId
     mobile: mobile, // the other employee's own WABA number, from their perspective
     type: legacyType,
     text,
+    // Caption reuses the existing (dormant, utf8mb4) `actual_name` column rather
+    // than a new one — see mappers.js's toMessageDto for the read side.
+    actualName: sanitizeCaption(caption),
     waNumber: mobile,
     sendBy: otherEmployee.empId,
     userAdminId: otherEmployee.empId,
@@ -165,10 +169,10 @@ async function mirrorForOppositeWaba({ mobile, legacyType, text, media, sourceId
   })
 }
 
-async function sendOne({ req, mobile, type, text, media, ctrId, accountId }) {
+async function sendOne({ req, mobile, type, text, media, caption, ctrId, accountId }) {
   let vendorResult
   try {
-    vendorResult = await sendVendorMessage({ employee: req.employee, mobile, type, text, media })
+    vendorResult = await sendVendorMessage({ employee: req.employee, mobile, type, text, media, caption })
   } catch (error) {
     // Otherwise this lands as a generic "Internal server error" (500s mask their
     // message) and the composer can't show the real reason the vendor rejected it.
@@ -201,6 +205,9 @@ async function sendOne({ req, mobile, type, text, media, ctrId, accountId }) {
     accountId,
     type: legacyType,
     text: messageText,
+    // Caption reuses the existing (dormant, utf8mb4) `actual_name` column rather
+    // than a new one — see mappers.js's toMessageDto for the read side.
+    actualName: sanitizeCaption(caption),
     waNumber: req.waNumber,
     sendBy: req.employeeId,
     userAdminId: req.userAdminId,
@@ -244,6 +251,7 @@ async function sendOne({ req, mobile, type, text, media, ctrId, accountId }) {
       legacyType,
       text: messageText,
       media,
+      caption,
       sourceId: vendorResult.sourceId,
       ctrId,
       accountId,
@@ -258,15 +266,17 @@ async function sendOne({ req, mobile, type, text, media, ctrId, accountId }) {
 }
 
 /*
- * Composer text and each attached file become independent messages (one row per
- * WhatsApp message, matching both real WhatsApp and the legacy one-type-per-row schema).
+ * See utils/sendPlan.js's buildSendPlan for the actual "one media message with a
+ * caption, not a separate text message" decision — kept as a pure, independently
+ * tested function since everything below it needs a live DB/vendor call to exercise.
  */
 export async function sendMessage(req, res) {
   const { mobile } = req.params
   const text = sanitizePlainText(req.body.text)
   const files = req.files?.length ? await storeUploadedFiles(req.userAdminId, req.files) : []
+  const plan = buildSendPlan({ text, files })
 
-  if (!text && files.length === 0) {
+  if (plan.length === 0) {
     throw new HttpError(400, 'Message must contain text or at least one file')
   }
 
@@ -281,18 +291,22 @@ export async function sendMessage(req, res) {
   const accountId = account?.accountId ?? 0
 
   const sent = []
-  if (text) sent.push(await sendOne({ req, mobile, type: 'text', text, ctrId, accountId }))
-  for (const media of files) {
-    sent.push(
-      await sendOne({
-        req,
-        mobile,
-        type: { I: 'image', V: 'video', A: 'audio', D: 'document' }[media.type],
-        media,
-        ctrId,
-        accountId,
-      }),
-    )
+  for (const item of plan) {
+    if (item.kind === 'text') {
+      sent.push(await sendOne({ req, mobile, type: 'text', text: item.text, ctrId, accountId }))
+    } else {
+      sent.push(
+        await sendOne({
+          req,
+          mobile,
+          type: { I: 'image', V: 'video', A: 'audio', D: 'document' }[item.media.type],
+          media: item.media,
+          caption: item.caption,
+          ctrId,
+          accountId,
+        }),
+      )
+    }
   }
 
   res.status(201).json({ messages: sent })

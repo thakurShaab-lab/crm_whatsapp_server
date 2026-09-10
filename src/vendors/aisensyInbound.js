@@ -73,7 +73,11 @@ function extractContent(messageType, messageValue) {
   }
   const mediaTypeMap = { image: 'I', audio: 'A', video: 'V', document: 'D' }
   if (mediaTypeMap[messageType]) {
-    return { legacyType: mediaTypeMap[messageType], media: messageValue[messageType] }
+    // WhatsApp carries a media message's caption on the media object itself
+    // (`messageValue.image.caption`, etc.) — audio never has one on the real
+    // WhatsApp app either, so there's nothing missing by mediaTypeMap not
+    // including 'audio' in any caption-bearing special case here.
+    return { legacyType: mediaTypeMap[messageType], media: messageValue[messageType], caption: messageValue[messageType]?.caption || null }
   }
   return { legacyType: 'T', text: '' }
 }
@@ -148,7 +152,7 @@ export async function parseAiSensyWebhook(rawBody, { employee, userAdminId }) {
   const contactName = rawProfileName || value.contacts?.[0]?.wa_id
   const countryCode = extractCountryCode({ userId: value.contacts?.[0]?.user_id, mobile })
   const messageType = messageValue.type
-  const { legacyType, text, media } = extractContent(messageType, messageValue)
+  const { legacyType, text, media, caption } = extractContent(messageType, messageValue)
 
   let stopService = null
   if (legacyType === 'B') {
@@ -169,6 +173,7 @@ export async function parseAiSensyWebhook(rawBody, { employee, userAdminId }) {
       mime: downloaded.mime,
       mediaUrl: downloaded.url,
       vendorMessageId: media.id,
+      caption,
     }
   } else {
     messagePayload = { type: INTERNAL_TYPE_BY_LEGACY[legacyType], text }
