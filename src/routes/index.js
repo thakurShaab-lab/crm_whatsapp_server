@@ -8,6 +8,7 @@ import contactsRoutes from './contacts.routes.js'
 import templatesRoutes from './templates.routes.js'
 import webhooksRoutes from './webhooks.routes.js'
 import devRoutes from './dev.routes.js'
+import meRoutes from './me.routes.js'
 
 const router = Router()
 
@@ -22,6 +23,7 @@ router.use('/conversations', conversationsRoutes)
 router.use('/conversations/:mobile/messages', messagesRoutes)
 router.use('/contacts', contactsRoutes)
 router.use('/templates', templatesRoutes)
+router.use('/me', meRoutes)
 
 if (config.env !== 'production') {
   router.use('/dev', devRoutes)
