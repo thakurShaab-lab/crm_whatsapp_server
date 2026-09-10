@@ -22,10 +22,16 @@ export async function sendAutoText({ employee, userAdminId, waNumber, mobile, co
     jsonResponse: vendorResult.responseBody,
   })
 
+  const resolvedMobile = vendorResult.resolvedMobile || mobile
+  // See messagesController.js's sendOne — same tmp_name carry-forward, so this
+  // auto-response doesn't reset the conversation's customer-name back to null.
+  const tmpName = await messagesModel.findLatestTmpName({ userAdminId, waNumber, mobile: resolvedMobile })
+
   const inserted = await messagesModel.insertMessage({
     response: 'Auto response sent',
     name: employee.firstName,
-    mobile: vendorResult.resolvedMobile || mobile,
+    tmpName,
+    mobile: resolvedMobile,
     accountId,
     type: 'T',
     text,

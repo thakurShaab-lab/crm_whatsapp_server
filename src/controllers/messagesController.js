@@ -86,14 +86,15 @@ export async function listThreadMessages(req, res) {
   }
 
   // Batched so a page of messages never does one status lookup per row.
-  const [sentStatusMap, lastInboundReply] = await Promise.all([
+  const [sentStatusMap, lastInboundReply, tmpName] = await Promise.all([
     sentResponseModel.findLatestStatusMap(rows.map((row) => row.sourceId)),
     messagesModel.findLastInboundReply({ mobile, waNumber: req.waNumber }),
+    messagesModel.findLatestTmpName({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
   ])
 
   // Already ascending (oldest-first) straight from the model query — no client-side reversal needed.
   const items = rows.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId)))
-  const contact = toContactDto(mobile, account, null, {
+  const contact = toContactDto(mobile, account, tmpName, {
     countryCode: ctrIdNum ?? rows[0]?.countryCode ?? null,
     userAdminId: req.userAdminId,
     wabano: req.waNumber,
@@ -186,9 +187,16 @@ async function sendOne({ req, mobile, type, text, media, ctrId, accountId }) {
   const resolvedMobile = vendorResult.resolvedMobile || mobile
   const messageText = type === 'text' ? text : media.originalFilename
 
+  // Carries the customer's own already-known tmp_name forward onto this outbound
+  // row too, so it (not the employee's name in `name` below) stays the reliable
+  // "whoever's on the other end of this conversation" signal regardless of which
+  // side sent the most recent message — see mappers.js's toConversationSummaryDto.
+  const tmpName = await messagesModel.findLatestTmpName({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile: resolvedMobile })
+
   const inserted = await messagesModel.insertMessage({
     response: `${type === 'text' ? 'Sent' : 'Media sent'} from Agent`,
     name: req.employee.firstName,
+    tmpName,
     mobile: resolvedMobile,
     accountId,
     type: legacyType,

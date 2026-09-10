@@ -97,6 +97,12 @@ async function processInboundMessage({ userAdminId, waNumber, contact, message, 
   const inserted = await messagesModel.insertMessage({
     response: 'Received',
     name: contact.name || contact.mobile,
+    // The customer's real WhatsApp display name (never an employee's), used for
+    // display everywhere instead of `name` above — see mappers.js's
+    // toConversationSummaryDto/toContactDto. Left unset (null) here only when
+    // WhatsApp never reported one, in which case display falls back to the phone
+    // number, not to whatever fallback `name` above happens to carry.
+    tmpName: contact.profileName || null,
     mobile: contact.mobile,
     type: INBOUND_TYPE_TO_LEGACY[message.type] || 'T',
     text: message.type === 'text' || message.type === 'button' ? sanitizePlainText(message.text) : message.filename || '',

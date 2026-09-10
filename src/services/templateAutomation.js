@@ -214,10 +214,15 @@ export async function sendApprovedTemplateToRecipient({ userAdminId, templateId,
   const paidTemplate = await resolvePaidTemplateFlag({ template, whatsappNumber, waNumber: employee.whatsappWabano })
   const leadOwner = await leadsModel.findLeadByAccountId(recipient.accountId)
   const sendBy = leadOwner?.leadOwner > 0 ? leadOwner.leadOwner : userAdminId
+  // See messagesController.js's sendOne — same tmp_name carry-forward. `recipient.clientName`
+  // above is the CRM-resolved name, which is fine for `name`, but display (mappers.js's
+  // toConversationSummaryDto/toContactDto) only ever trusts tmp_name, so it needs setting here too.
+  const tmpName = await messagesModel.findLatestTmpName({ userAdminId, waNumber: employee.whatsappWabano, mobile: whatsappNumber })
 
   const inserted = await messagesModel.insertMessage({
     response: 'Template Sent From Agent',
     name: recipient.clientName,
+    tmpName,
     mobile: whatsappNumber,
     type: 'F',
     text: templateMsg,

@@ -84,9 +84,12 @@ async function advanceJourney({ employee, trackId, journeyId, clientMobile, clie
   while (node) {
     const { sourceId, dbText } = await sendJourneyNode({ employee, node, clientMobile })
     if (sourceId) {
+      // See messagesController.js's sendOne — same tmp_name carry-forward.
+      const tmpName = await messagesModel.findLatestTmpName({ userAdminId, waNumber: wabaNumber, mobile: clientMobile })
       await messagesModel.insertMessage({
         response: 'Sent From Agent',
         name: clientName,
+        tmpName,
         mobile: clientMobile,
         type: 'T',
         text: dbText,

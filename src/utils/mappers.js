@@ -63,11 +63,13 @@ export function toMessageDto(row, sentStatusRow = null) {
 export function toConversationSummaryDto(row, account, sentStatusRow = null, context = {}) {
   return {
     mobile: row.mobile,
-    // This app is used by employees, not clients — an account's business/company name
-    // (accountName, e.g. "Weblink.in Pvt Ltd") doesn't identify which individual is on
-    // the other end, so it's deliberately skipped in favor of the client's own name or
-    // their number.
-    name: account?.contactPersonName || row.name || row.mobile,
+    // The customer's own WhatsApp display name (`tmp_name` — see messagesModel.js's
+    // findLatestTmpName), falling back to their phone number. Deliberately not
+    // `row.name` (that column's own send-time value isn't reliably the customer —
+    // see messagesController.js's sendOne) and not the CRM account's name (an
+    // account's business/company name, e.g. "Weblink.in Pvt Ltd", doesn't identify
+    // which individual is on the other end anyway).
+    name: row.tmpName || row.mobile,
     countryCode: row.countryCode,
     stopService: account ? account.stopService === 'Y' : false,
     unreadCount: Number(row.unreadCount) || 0,
@@ -89,11 +91,14 @@ export function toConversationSummaryDto(row, account, sentStatusRow = null, con
   }
 }
 
-export function toContactDto(mobile, account, fallbackName, context = {}) {
+export function toContactDto(mobile, account, tmpName, context = {}) {
   return {
     mobile,
-    // Same reasoning as toConversationSummaryDto — skip the business/account name.
-    name: account?.contactPersonName || fallbackName || mobile,
+    // The customer's own WhatsApp display name takes priority when this mobile has
+    // any message history at all (see toConversationSummaryDto's comment); the CRM
+    // account's contact name is still a reasonable fallback when it doesn't (e.g. the
+    // "start new chat" search, which has no message history to have captured one from).
+    name: tmpName || account?.contactPersonName || mobile,
     stopService: account ? account.stopService === 'Y' : false,
     accountId: account?.accountId ?? null,
     for: account ? USER_TYPE_TO_FOR[account.userType] || null : null,

@@ -25,5 +25,8 @@ export async function getContact(req, res) {
     throw new HttpError(404, 'Contact not found')
   }
 
-  res.json(toContactDto(mobile, account, null, { windowExpired: isWindowExpired(lastInboundReply) }))
+  // `lastMessage.tmpName` is reliable here (not just on the true latest row) because
+  // every outbound insert carries the known tmp_name forward too — see
+  // messagesController.js's sendOne and outboundSend.js's sendAutoText.
+  res.json(toContactDto(mobile, account, lastMessage?.tmpName, { windowExpired: isWindowExpired(lastInboundReply) }))
 }

@@ -140,7 +140,12 @@ export async function parseAiSensyWebhook(rawBody, { employee, userAdminId }) {
   const mobile = value.contacts?.[0]?.wa_id
   if (!waNumber || !mobile) return null
 
-  const contactName = value.contacts?.[0]?.profile?.name || value.contacts?.[0]?.wa_id
+  // The customer's own WhatsApp display name, before falling back to their wa_id —
+  // stored separately (see `contact.profileName` below) so it can be kept distinct
+  // from `contact.name`'s wa_id fallback: `profileName` is only ever a real captured
+  // name or null, which is what "is a name available at all" needs to mean.
+  const rawProfileName = value.contacts?.[0]?.profile?.name || null
+  const contactName = rawProfileName || value.contacts?.[0]?.wa_id
   const countryCode = extractCountryCode({ userId: value.contacts?.[0]?.user_id, mobile })
   const messageType = messageValue.type
   const { legacyType, text, media } = extractContent(messageType, messageValue)
@@ -173,7 +178,7 @@ export async function parseAiSensyWebhook(rawBody, { employee, userAdminId }) {
     event: 'inbound',
     waNumber,
     msgtype: isEcho ? 'S' : 'R',
-    contact: { mobile, countryCode, name: contactName },
+    contact: { mobile, countryCode, name: contactName, profileName: rawProfileName },
     message: messagePayload,
     stopService,
   }

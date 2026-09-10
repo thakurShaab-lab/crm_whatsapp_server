@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, lt, or, like, max, count } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, isNotNull, lt, or, like, max, count } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { messages } from '../schema/messages.js'
 
@@ -56,6 +56,7 @@ export async function listConversations({ userAdminId, waNumber, search, unreadO
       sl: messages.sl,
       mobile: messages.mobile,
       name: messages.name,
+      tmpName: messages.tmpName,
       countryCode: messages.countryCode,
       type: messages.type,
       text: messages.text,
@@ -90,6 +91,26 @@ export async function getConversationSummary({ userAdminId, waNumber, mobile }) 
     .where(and(conditions, eq(messages.msgtype, 'R'), eq(messages.readStatus, 'U')))
 
   return { ...lastMessage, unreadCount }
+}
+
+/**
+ * The customer's own name for this conversation — `tmp_name` on the most recent
+ * message that actually has one set (never an employee's name; see
+ * webhooksController.js's processInboundMessage, the only place a fresh value is
+ * ever captured, straight from the customer's WhatsApp profile). Every outbound
+ * send carries this same value forward onto its own row (see messagesController.js's
+ * sendOne, outboundSend.js, etc.), so in practice this only ever needs to look past
+ * the true latest row when nothing has captured a name yet at all — but it's a
+ * direct lookup either way, not a guess.
+ */
+export async function findLatestTmpName({ userAdminId, waNumber, mobile }) {
+  const [row] = await db
+    .select({ tmpName: messages.tmpName })
+    .from(messages)
+    .where(and(...scope({ userAdminId, waNumber }), eq(messages.mobile, mobile), isNotNull(messages.tmpName)))
+    .orderBy(desc(messages.recvDate))
+    .limit(1)
+  return row?.tmpName || null
 }
 
 /**
