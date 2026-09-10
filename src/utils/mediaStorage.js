@@ -48,7 +48,10 @@ export const EXTENSION_BY_MIME = {
  * `whatsapp_sent_file` vs `wp_incoming_file`).
  */
 export async function saveMediaBuffer({ userAdminId, subfolder, buffer, mime, filenameHint }) {
-  const dir = path.join(process.cwd(), config.upload.dir, 'media', `userfolder_${userAdminId}`, subfolder)
+  // `config.upload.dir` may be an absolute path (e.g. in production) or a relative
+  // dev-friendly one — `path.resolve` handles both correctly, unlike `path.join`,
+  // which would wrongly nest an absolute dir underneath `process.cwd()`.
+  const dir = path.resolve(config.upload.dir, 'media', `userfolder_${userAdminId}`, subfolder)
   await mkdir(dir, { recursive: true })
 
   const extension = (filenameHint && filenameHint.split('.').pop()) || EXTENSION_BY_MIME[mime] || 'bin'
@@ -68,7 +71,7 @@ export async function storeUploadedFiles(userAdminId, files) {
       throw error
     }
 
-    const dir = path.join(process.cwd(), config.upload.dir, 'media', `userfolder_${userAdminId}`, 'whatsapp_sent_file')
+    const dir = path.resolve(config.upload.dir, 'media', `userfolder_${userAdminId}`, 'whatsapp_sent_file')
     await mkdir(dir, { recursive: true })
 
     const extension = EXTENSION_BY_MIME[validation.mime] || 'bin'

@@ -16,7 +16,9 @@ export function createApp() {
   app.use(express.json())
   app.use(
     '/uploads',
-    express.static(path.join(process.cwd(), config.upload.dir), { dotfiles: 'deny', index: false }),
+    // `path.resolve` (not `path.join`) so an absolute `UPLOAD_DIR` (e.g. in
+    // production) is served as-is instead of being wrongly nested under cwd.
+    express.static(path.resolve(config.upload.dir), { dotfiles: 'deny', index: false }),
   )
 
   app.use('/api', routes)
