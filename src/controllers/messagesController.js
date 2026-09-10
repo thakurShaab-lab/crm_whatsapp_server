@@ -9,11 +9,10 @@ import { sanitizePlainText } from '../utils/sanitize.js'
 import { getIsdFromMobile } from '../utils/isdCodes.js'
 import { toMessageDto, toContactDto, USER_TYPE_TO_FOR, isWindowExpired } from '../utils/mappers.js'
 import { encodeCursor, decodeCursor } from '../utils/pagination.js'
+import { computeDateWindow } from '../utils/dateWindow.js'
 import { HttpError } from '../middleware/errorHandler.js'
 import { emitNewMessage } from '../socket/emitters.js'
 import { buildConversationSummaryDto } from './conversationsController.js'
-
-const PAGE_SIZE = 50
 
 /*
  * The legacy CRM opens a chat as `whatsapp_chat.php?wanum=...&ctrId=...&refid=...&useradminid=...&wabano=...`
@@ -25,7 +24,7 @@ const PAGE_SIZE = 50
  */
 export async function listThreadMessages(req, res) {
   const { mobile } = req.params
-  const { cursor, limit, ctrId, for: forType, refid, wanum, useradminid, wabano } = req.query
+  const { cursor, ctrId, for: forType, refid, wanum, useradminid, wabano } = req.query
 
   // Route-level `validate()` coerces these via zod, but Express re-derives `req.query`
   // as fresh strings on every access, so the coercion doesn't survive — re-coerce here,
@@ -44,22 +43,34 @@ export async function listThreadMessages(req, res) {
     throw new HttpError(403, 'wabano does not match the current agent context')
   }
 
+  // Chat history paginates by exact calendar-day windows (3 days at a time), not by
+  // message count — see utils/dateWindow.js. The cursor (opaque, same encode/decode
+  // helper the conversations list uses) carries the previous window's lower boundary
+  // forward as the next window's upper boundary, so pages tile the calendar exactly:
+  // no gap or overlap even across a day with zero messages. No cursor = the very
+  // first page, i.e. "through the end of today".
   const decoded = decodeCursor(cursor)
-  const pageSize = limit ? Number(limit) : PAGE_SIZE
+  const { fromBoundary, toBoundary } = computeDateWindow(decoded?.to ? new Date(decoded.to) : null)
 
-  const rows = await messagesModel.listThreadMessages({
+  const rows = await messagesModel.listThreadMessagesByWindow({
     userAdminId: req.userAdminId,
     waNumber: req.waNumber,
     mobile,
     countryCode: ctrIdNum,
-    cursor: decoded?.sl,
-    limit: pageSize,
+    fromBoundary,
+    toBoundary,
   })
 
-  const hasMore = rows.length > pageSize
-  const page = hasMore ? rows.slice(0, pageSize) : rows
-  const last = page[page.length - 1]
-  const nextCursor = hasMore && last ? encodeCursor({ sl: last.sl }) : null
+  // Independent of whether *this* window had any messages — a day, or the whole
+  // 3-day window, can be empty while older history still exists further back.
+  const hasMore = await messagesModel.hasMessagesBefore({
+    userAdminId: req.userAdminId,
+    waNumber: req.waNumber,
+    mobile,
+    countryCode: ctrIdNum,
+    boundary: fromBoundary,
+  })
+  const nextCursor = hasMore ? encodeCursor({ to: fromBoundary.toISOString() }) : null
 
   // refid (account_id) comes straight from the CRM record the chat was opened from —
   // when present it's the real identity, no phone-matching guess needed.
@@ -76,20 +87,27 @@ export async function listThreadMessages(req, res) {
 
   // Batched so a page of messages never does one status lookup per row.
   const [sentStatusMap, lastInboundReply] = await Promise.all([
-    sentResponseModel.findLatestStatusMap(page.map((row) => row.sourceId)),
+    sentResponseModel.findLatestStatusMap(rows.map((row) => row.sourceId)),
     messagesModel.findLastInboundReply({ mobile, waNumber: req.waNumber }),
   ])
 
-  // DB returns newest-first for keyset pagination; the client renders oldest-to-newest.
-  const items = page.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId))).reverse()
+  // Already ascending (oldest-first) straight from the model query — no client-side reversal needed.
+  const items = rows.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId)))
   const contact = toContactDto(mobile, account, null, {
-    countryCode: ctrIdNum ?? page[0]?.countryCode ?? null,
+    countryCode: ctrIdNum ?? rows[0]?.countryCode ?? null,
     userAdminId: req.userAdminId,
     wabano: req.waNumber,
     windowExpired: isWindowExpired(lastInboundReply),
   })
 
-  res.json({ items, nextCursor, contact })
+  res.json({
+    items,
+    nextCursor,
+    hasMore,
+    oldestLoadedDate: fromBoundary.toISOString(),
+    newestLoadedDate: toBoundary.toISOString(),
+    contact,
+  })
 }
 
 /**

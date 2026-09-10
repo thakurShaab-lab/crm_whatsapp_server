@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, lt, or, like, max, count } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, lt, or, like, max, count } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { messages } from '../schema/messages.js'
 
@@ -92,19 +92,37 @@ export async function getConversationSummary({ userAdminId, waNumber, mobile }) 
   return { ...lastMessage, unreadCount }
 }
 
-export async function listThreadMessages({ userAdminId, waNumber, mobile, countryCode, cursor, limit }) {
-  const conditions = [...scope({ userAdminId, waNumber }), eq(messages.mobile, mobile)]
+/**
+ * Every message in this conversation whose `recvDate` falls in the calendar-day
+ * window `[fromBoundary, toBoundary)` — see utils/dateWindow.js. `sl` (not
+ * `recvDate`) breaks ties for messages sharing the exact same timestamp, since it's
+ * a strictly-increasing insert-order id and therefore a stable secondary sort key.
+ * Ascending order: this is the exact page the client renders, oldest-first,
+ * no client-side reversal needed.
+ */
+export async function listThreadMessagesByWindow({ userAdminId, waNumber, mobile, countryCode, fromBoundary, toBoundary }) {
+  const conditions = [
+    ...scope({ userAdminId, waNumber }),
+    eq(messages.mobile, mobile),
+    gte(messages.recvDate, fromBoundary),
+    lt(messages.recvDate, toBoundary),
+  ]
   if (countryCode != null) conditions.push(eq(messages.countryCode, Number(countryCode)))
-  if (cursor) conditions.push(lt(messages.sl, cursor))
 
-  const rows = await db
+  return db
     .select()
     .from(messages)
     .where(and(...conditions))
-    .orderBy(desc(messages.sl))
-    .limit(limit + 1)
+    .orderBy(asc(messages.recvDate), asc(messages.sl))
+}
 
-  return rows
+/** Whether this conversation has any message older than `boundary` — drives `hasMore`, independent of whether the just-fetched window itself had any messages (a day, or even the whole 3-day window, can be empty while older history still exists). */
+export async function hasMessagesBefore({ userAdminId, waNumber, mobile, countryCode, boundary }) {
+  const conditions = [...scope({ userAdminId, waNumber }), eq(messages.mobile, mobile), lt(messages.recvDate, boundary)]
+  if (countryCode != null) conditions.push(eq(messages.countryCode, Number(countryCode)))
+
+  const [row] = await db.select({ sl: messages.sl }).from(messages).where(and(...conditions)).limit(1)
+  return Boolean(row)
 }
 
 export async function findMessageBySl(sl) {

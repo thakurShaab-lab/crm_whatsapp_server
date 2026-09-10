@@ -21,8 +21,10 @@ const upload = multer({
 // when a chat is selected from the sidebar — see messagesController.listThreadMessages
 // for how each one is resolved/validated against the real tables.
 const legacyChatContextQuery = z.object({
+  // Opaque, base64url-encoded — see utils/pagination.js + utils/dateWindow.js. Omitted
+  // for the first page (the latest 3 calendar days); each "load more" click sends back
+  // the previous response's own `nextCursor` to walk one more 3-day window into the past.
   cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional(),
   ctrId: z.coerce.number().int().optional(),
   for: z.enum(['C', 'L', 'D', 'V']).optional(),
   refid: z.coerce.number().int().optional(),
