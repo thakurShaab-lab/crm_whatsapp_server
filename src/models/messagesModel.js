@@ -151,9 +151,19 @@ export async function findMessageBySl(sl) {
   return row || null
 }
 
+/**
+ * Looks up the message a vendor status webhook (delivered/read/failed) is about.
+ * `source_id` has no uniqueness constraint, and `mirrorForOppositeWaba` (see
+ * messagesController.js's sendOne) deliberately inserts a second row with the
+ * *same* sourceId — msgtype 'R', a same-account "you sent this to your own WABA
+ * number" log copy, not the real outbound send. A status webhook is always about
+ * the real outbound message (msgtype 'S'), so that's preferred whenever more than
+ * one row shares a sourceId; falling back to the first (oldest) match otherwise.
+ */
 export async function findMessageBySourceId(sourceId) {
-  const [row] = await db.select().from(messages).where(eq(messages.sourceId, sourceId)).limit(1)
-  return row || null
+  const rows = await db.select().from(messages).where(eq(messages.sourceId, sourceId)).orderBy(asc(messages.sl))
+  if (rows.length === 0) return null
+  return rows.find((row) => row.msgtype === 'S') || rows[0]
 }
 
 /** Most recent genuine inbound reply from this contact — used to decide whether a utility template still falls in WhatsApp's 24-hour free service window. */
