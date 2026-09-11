@@ -69,3 +69,13 @@ export const messages = mysqlTable('whatsapp_incoming_reply_response', {
   autoTemplateFailedDate: date('auto_template_failed_date').notNull(),
   isRunProgram: tinyint('is_run_program').notNull().default(0),
 })
+
+
+/** Maps `whatsapp_response` */
+export const response = mysqlTable('whatsapp_response', {
+  sl: int('sl').autoincrement().primaryKey(),
+  response: text('response').notNull(),
+  recvDate: datetime('recvDate').notNull(),
+  status: char('status', { length: 1 }).notNull().default('N'),
+  piResponse: char('pi_response', { length: 1 }).notNull().default('N'),
+})

@@ -2,6 +2,7 @@ import * as messagesModel from '../models/messagesModel.js'
 import * as sentResponseModel from '../models/sentResponseModel.js'
 import * as accountModel from '../models/accountModel.js'
 import * as logModel from '../models/logModel.js'
+import * as responseModel from '../models/responseModel.js'
 import { toMessageDto, mapMsgStatusToTickStatus, TICK_STATUS_TO_MSG_STATUS } from '../utils/mappers.js'
 import { sanitizePlainText, sanitizeCaption } from '../utils/sanitize.js'
 import { HttpError } from '../middleware/errorHandler.js'
@@ -16,6 +17,7 @@ import { processInboundForJourney } from '../services/journeyEngine.js'
 import { triggerFirstMessageAutomation } from '../services/templateAutomation.js'
 import * as companyDetailsModel from '../models/companyDetailsModel.js'
 import { config } from '../config/index.js'
+import { logger } from '../utils/logger.js'
 
 const INBOUND_TYPE_TO_LEGACY = { text: 'T', button: 'B', image: 'I', video: 'V', audio: 'A', document: 'D' }
 
@@ -53,8 +55,19 @@ const STATUS_RANK = { sending: 0, sent: 1, delivered: 2, read: 3, failed: 4 }
  */
 async function processStatusEvent({ waNumber, vendorMessageId, status, statusRemark, occurredAt }) {
   const message = await messagesModel.findMessageBySourceId(vendorMessageId)
-  if (!message) throw new HttpError(404, `No message found for vendorMessageId "${vendorMessageId}"`)
-  if (STATUS_RANK[status] == null) throw new HttpError(400, `Unknown status "${status}"`)
+  // A vendor webhook must never surface as a hard error back to the vendor — same
+  // principle as the "not one of ours" ack path in receiveAiSensyWebhook below.
+  // Throwing here previously caused an uncaught 404, which (a) risks AiSensy
+  // eventually backing off/disabling a webhook URL that keeps erroring, and (b)
+  // silently drops this one status update with no record it was ever dropped.
+  if (!message) {
+    logger.warn({ vendorMessageId, status }, 'status webhook: no message found for this vendorMessageId')
+    return null
+  }
+  if (STATUS_RANK[status] == null) {
+    logger.warn({ vendorMessageId, status }, 'status webhook: unknown status value')
+    return null
+  }
 
   const currentStatusRow = await sentResponseModel.findLatestStatus(vendorMessageId)
   const currentStatus = currentStatusRow ? mapMsgStatusToTickStatus(currentStatusRow.msgStatus) : (message.status === 'Y' ? 'sent' : 'sending')
@@ -266,23 +279,33 @@ async function receiveAiSensyWebhook(req, res) {
     })
     .catch(() => {})
 
-  const displayPhoneNumber = req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.display_phone_number
-  const employee = displayPhoneNumber ? await findEmployeeByWabaNo(displayPhoneNumber) : null
-  if (!employee) {
-    // Not one of ours (or a payload shape with nothing to act on) — ack anyway so
-    // the vendor doesn't retry.
-    return res.status(200).json({ ok: true, result: null })
+  // Legacy's `whatsapp_response` staging table: every raw payload is persisted
+  // with status='N' before any parsing happens, then flipped to 'Y' once this
+  // payload has been fully handled (success or failure) — see whatsapp_aisense_
+  // response.php's initial insert and its `$resp_qry_upd` at the end.
+  const rawResponseId = await responseModel.insertRawResponse({ response: req.body })
+
+  try {
+    const displayPhoneNumber = req.body?.entry?.[0]?.changes?.[0]?.value?.metadata?.display_phone_number
+    const employee = displayPhoneNumber ? await findEmployeeByWabaNo(displayPhoneNumber) : null
+    if (!employee) {
+      // Not one of ours (or a payload shape with nothing to act on) — ack anyway so
+      // the vendor doesn't retry.
+      return res.status(200).json({ ok: true, result: null })
+    }
+
+    const parsed = await parseAiSensyWebhook(req.body, { employee, userAdminId: employee.empId })
+    if (!parsed) return res.status(200).json({ ok: true, result: null })
+
+    const result = await handleIncomingWebhook({
+      userAdminId: employee.empId,
+      waNumber: parsed.waNumber,
+      payload: { ...parsed, vendorType: 'A' },
+    })
+    res.status(200).json({ ok: true, result })
+  } finally {
+    await responseModel.markProcessed(rawResponseId).catch(() => {})
   }
-
-  const parsed = await parseAiSensyWebhook(req.body, { employee, userAdminId: employee.empId })
-  if (!parsed) return res.status(200).json({ ok: true, result: null })
-
-  const result = await handleIncomingWebhook({
-    userAdminId: employee.empId,
-    waNumber: parsed.waNumber,
-    payload: { ...parsed, vendorType: 'A' },
-  })
-  res.status(200).json({ ok: true, result })
 }
 
 // Webhook callers are the vendor itself, not an authenticated agent — resolve the

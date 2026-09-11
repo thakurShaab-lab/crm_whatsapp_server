@@ -199,7 +199,7 @@ async function sendOne({ req, mobile, type, text, media, caption, ctrId, account
 
   const inserted = await messagesModel.insertMessage({
     response: `${type === 'text' ? 'Sent' : 'Media sent'} from Agent`,
-    name: req.employee.firstName,
+    name: tmpName,
     tmpName,
     mobile: resolvedMobile,
     accountId,

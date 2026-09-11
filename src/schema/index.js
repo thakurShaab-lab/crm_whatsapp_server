@@ -1,4 +1,4 @@
-export { messages } from './messages.js'
+export { messages, response as whatsappResponse } from './messages.js'
 export { account } from './account.js'
 export { employees } from './employees.js'
 export { incomingReplyResponseLog } from './incomingReplyResponseLog.js'
