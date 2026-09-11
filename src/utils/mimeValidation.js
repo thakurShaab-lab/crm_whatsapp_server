@@ -30,7 +30,15 @@ const ALLOWLIST = {
     maxBytes: config.upload.maxDocumentBytes,
   },
   A: {
-    mimes: new Set(['audio/mpeg', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/wav', 'audio/x-wav']),
+    // `audio/webm` is what Chrome/Edge/Firefox's MediaRecorder produces for a voice
+    // recording by default — but the `file-type` package's WebM sniffer only ever
+    // reports the container's outer DocType, never whether it holds a video track,
+    // so an audio-only recording is magic-byte-detected as `video/webm` (a known,
+    // widely-hit limitation of magic-byte-only detection for WebM/Matroska).
+    // Accepting both here is what actually makes voice messages work on those
+    // browsers; the (rare) cost is a real *video* .webm file, if ever manually
+    // attached via the file picker, would misclassify as audio-only too.
+    mimes: new Set(['audio/mpeg', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/wav', 'audio/x-wav', 'audio/webm', 'video/webm']),
     maxBytes: config.upload.maxAudioBytes,
   },
 }

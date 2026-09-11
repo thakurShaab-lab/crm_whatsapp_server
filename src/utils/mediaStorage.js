@@ -27,6 +27,10 @@ export const EXTENSION_BY_MIME = {
   'audio/aac': 'aac',
   'audio/wav': 'wav',
   'audio/x-wav': 'wav',
+  // Voice recordings from MediaRecorder — see mimeValidation.js's comment on why
+  // both mimes need to be here (audio-only WebM is magic-byte-detected as `video/webm`).
+  'audio/webm': 'webm',
+  'video/webm': 'webm',
 }
 
 /**
