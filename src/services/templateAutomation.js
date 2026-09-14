@@ -160,7 +160,27 @@ async function resolvePaidTemplateFlag({ template, whatsappNumber, waNumber }) {
  * `mediaOverride` (`{url, mediaType, filename}`) overrides the template's own
  * configured media for this one send, matching legacy's optional file upload.
  */
-export async function sendApprovedTemplateToRecipient({ userAdminId, templateId, recipient, manualValues = {}, mediaOverride = null }) {
+/**
+ * `conversationMobile`, when given, is the conversation's own canonical mobile
+ * (the route/thread key everything else — including the "Send Approved Template"
+ * banner's own window-expiry lookup, messagesModel.findLastOutboundTemplate — keys
+ * on). Without it, the inserted row's `mobile` came from reconstructing a
+ * "whatsappNumber" out of the CRM account's own stored phone/country-code fields
+ * below, which doesn't always byte-for-byte match the conversation's mobile (e.g.
+ * a differently-formatted `tbl_account.phone`) — storing under a mismatched value
+ * that the vendor still happily delivered to, but that the window-expiry lookup
+ * (an exact-match query) then never found, so the banner kept reappearing even
+ * right after a successful manual template send. `whatsappNumber` itself is still
+ * used for the actual vendor API call — only what we store locally changes.
+ */
+export async function sendApprovedTemplateToRecipient({
+  userAdminId,
+  templateId,
+  recipient,
+  manualValues = {},
+  mediaOverride = null,
+  conversationMobile = null,
+}) {
   const template = await manageWhstappTemplateModel.findById(templateId)
   if (!template || template.status !== 'Y' || template.templateVendor !== 'A') return { sent: false, reason: 'template_not_usable' }
 
@@ -211,19 +231,24 @@ export async function sendApprovedTemplateToRecipient({ userAdminId, templateId,
 
   if (!sourceMsgId) return { sent: false, reason: 'vendor_send_failed', vendorResponse: responseData }
 
+  // Always the conversation's own canonical mobile when we have it (a manual send
+  // always does) — see this function's doc comment on why that must never be the
+  // reconstructed `whatsappNumber` below.
+  const storedMobile = conversationMobile || whatsappNumber
+
   const paidTemplate = await resolvePaidTemplateFlag({ template, whatsappNumber, waNumber: employee.whatsappWabano })
   const leadOwner = await leadsModel.findLeadByAccountId(recipient.accountId)
   const sendBy = leadOwner?.leadOwner > 0 ? leadOwner.leadOwner : userAdminId
   // See messagesController.js's sendOne — same tmp_name carry-forward. `recipient.clientName`
   // above is the CRM-resolved name, which is fine for `name`, but display (mappers.js's
   // toConversationSummaryDto/toContactDto) only ever trusts tmp_name, so it needs setting here too.
-  const tmpName = await messagesModel.findLatestTmpName({ userAdminId, waNumber: employee.whatsappWabano, mobile: whatsappNumber })
+  const tmpName = await messagesModel.findLatestTmpName({ userAdminId, waNumber: employee.whatsappWabano, mobile: storedMobile })
 
   const inserted = await messagesModel.insertMessage({
     response: 'Template Sent From Agent',
     name: recipient.clientName,
     tmpName,
-    mobile: whatsappNumber,
+    mobile: storedMobile,
     type: 'F',
     text: templateMsg,
     waNumber: employee.whatsappWabano,
@@ -329,7 +354,7 @@ export async function sendApprovedTemplateManually({ userAdminId, mobile, countr
     ? recipientFromAccount(account, lead?.leadId || 0, lead?.firstName)
     : { accountId: 0, leadId: 0, clientName: mobile, countryCode: countryCode || '91', mobile, stopService: 'N' }
 
-  return sendApprovedTemplateToRecipient({ userAdminId, templateId, recipient, manualValues, mediaOverride })
+  return sendApprovedTemplateToRecipient({ userAdminId, templateId, recipient, manualValues, mediaOverride, conversationMobile: mobile })
 }
 
 // Reasons that mean "nothing configured for this yet" — an expected, silent no-op.
