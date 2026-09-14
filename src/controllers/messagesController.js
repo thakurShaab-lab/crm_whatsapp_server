@@ -7,7 +7,7 @@ import { sendMessage as sendVendorMessage } from '../vendors/vendorAdapter.js'
 import { storeUploadedFiles } from '../utils/mediaStorage.js'
 import { sanitizePlainText, sanitizeCaption } from '../utils/sanitize.js'
 import { getIsdFromMobile } from '../utils/isdCodes.js'
-import { toMessageDto, toContactDto, USER_TYPE_TO_FOR, isWindowExpired } from '../utils/mappers.js'
+import { toMessageDto, toContactDto, USER_TYPE_TO_FOR, isWindowExpiredForAgent } from '../utils/mappers.js'
 import { encodeCursor, decodeCursor } from '../utils/pagination.js'
 import { computeDateWindow } from '../utils/dateWindow.js'
 import { buildSendPlan } from '../utils/sendPlan.js'
@@ -87,9 +87,10 @@ export async function listThreadMessages(req, res) {
   }
 
   // Batched so a page of messages never does one status lookup per row.
-  const [sentStatusMap, lastInboundReply, tmpName] = await Promise.all([
+  const [sentStatusMap, lastInboundReply, lastOutboundTemplate, tmpName] = await Promise.all([
     sentResponseModel.findLatestStatusMap(rows.map((row) => row.sourceId)),
     messagesModel.findLastInboundReply({ mobile, waNumber: req.waNumber }),
+    messagesModel.findLastOutboundTemplate({ mobile, waNumber: req.waNumber }),
     messagesModel.findLatestTmpName({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
   ])
 
@@ -99,7 +100,7 @@ export async function listThreadMessages(req, res) {
     countryCode: ctrIdNum ?? rows[0]?.countryCode ?? null,
     userAdminId: req.userAdminId,
     wabano: req.waNumber,
-    windowExpired: isWindowExpired(lastInboundReply),
+    windowExpired: isWindowExpiredForAgent(lastInboundReply, lastOutboundTemplate),
   })
 
   res.json({

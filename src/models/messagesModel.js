@@ -177,6 +177,23 @@ export async function findLastInboundReply({ mobile, waNumber }) {
   return row || null
 }
 
+/**
+ * Most recent approved-template message this agent sent to this contact — used
+ * alongside `findLastInboundReply` so manually sending a template while the 24h
+ * window is closed hides the "Send Approved Template" prompt for the next 24h from
+ * that send (not the real WhatsApp customer-service window, which only a genuine
+ * customer reply reopens — see mappers.js's isWindowExpiredForAgent).
+ */
+export async function findLastOutboundTemplate({ mobile, waNumber }) {
+  const [row] = await db
+    .select({ recvDate: messages.recvDate })
+    .from(messages)
+    .where(and(eq(messages.mobile, mobile), eq(messages.waNumber, waNumber), eq(messages.msgtype, 'S'), eq(messages.type, 'F')))
+    .orderBy(desc(messages.sl))
+    .limit(1)
+  return row || null
+}
+
 /** Total genuine inbound messages ever received from this contact on this WABA — called after the current message is already inserted, so a result of exactly 1 means this is their first message ever. */
 export async function countInboundMessages({ userAdminId, waNumber, mobile }) {
   const [row] = await db

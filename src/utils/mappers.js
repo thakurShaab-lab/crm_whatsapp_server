@@ -28,6 +28,23 @@ export function isWindowExpired(lastReply) {
   return diffHours > 24
 }
 
+/**
+ * Drives whether the agent-facing "Send Approved Template" prompt shows — not
+ * WhatsApp's real customer-service window (that stays exactly `isWindowExpired`,
+ * used unchanged by templateAutomation.js's paid/free billing rule). Manually
+ * sending a template while the real window is closed hides this prompt for 24h
+ * from that send, same as a genuine reply would; after 24h with no real reply
+ * since, it reappears. `lastOutboundTemplate` comes from
+ * `messagesModel.findLastOutboundTemplate`.
+ */
+export function isWindowExpiredForAgent(lastReply, lastOutboundTemplate) {
+  const lastReplyTime = lastReply ? new Date(lastReply.recvDate).getTime() : null
+  const lastTemplateTime = lastOutboundTemplate ? new Date(lastOutboundTemplate.recvDate).getTime() : null
+  if (lastReplyTime == null && lastTemplateTime == null) return true
+  const mostRecent = Math.max(lastReplyTime ?? -Infinity, lastTemplateTime ?? -Infinity)
+  return (Date.now() - mostRecent) / 3_600_000 > 24
+}
+
 /** `sentStatusRow` comes from sentResponseModel.findLatestStatus(s)/findLatestStatusMap — null if none exists yet. */
 function deriveOutboundStatus(row, sentStatusRow) {
   if (sentStatusRow) return mapMsgStatusToTickStatus(sentStatusRow.msgStatus)
