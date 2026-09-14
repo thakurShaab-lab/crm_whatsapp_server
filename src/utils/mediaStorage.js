@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { config } from '../config/index.js'
 import { detectAndValidateUpload } from './mimeValidation.js'
+import { remuxWebmToOggOpus } from './audioTranscode.js'
 
 export const EXTENSION_BY_MIME = {
   'image/jpeg': 'jpg',
@@ -31,6 +32,11 @@ export const EXTENSION_BY_MIME = {
   // both mimes need to be here (audio-only WebM is magic-byte-detected as `video/webm`).
   'audio/webm': 'webm',
   'video/webm': 'webm',
+  // What a voice recording becomes after remuxWebmToOggOpus below — `file-type`
+  // reports the remuxed bytes as the more specific `audio/opus`, not `audio/ogg`,
+  // so a retry's re-upload of the already-remuxed file needs this mapping too
+  // (see mimeValidation.js's matching comment).
+  'audio/opus': 'ogg',
 }
 
 /**
@@ -75,17 +81,35 @@ export async function storeUploadedFiles(userAdminId, files) {
       throw error
     }
 
+    // A voice recording from Chrome/Edge/Firefox arrives as WebM/Opus (or is
+    // detected as `video/webm` — see mimeValidation.js's comment on that
+    // ambiguity), which WhatsApp's own API flatly rejects for audio messages
+    // (error 131053, "Unsupported Audio mime type"). Remux it into Ogg/Opus —
+    // one of WhatsApp's actually-accepted formats, and a pure repackaging since
+    // the audio itself is already Opus, not a re-encode — before storing it, so
+    // both our own playback and the vendor send use the same, WhatsApp-safe file.
+    // Falls back to the original bytes if ffmpeg isn't available on this server.
+    let bufferToStore = file.buffer
+    let mimeToStore = validation.mime
+    if (validation.type === 'A' && (validation.mime === 'audio/webm' || validation.mime === 'video/webm')) {
+      const remuxed = await remuxWebmToOggOpus(file.buffer)
+      if (remuxed) {
+        bufferToStore = remuxed
+        mimeToStore = 'audio/ogg'
+      }
+    }
+
     const dir = path.resolve(config.upload.dir, 'media', `userfolder_${userAdminId}`, 'whatsapp_sent_file')
     await mkdir(dir, { recursive: true })
 
-    const extension = EXTENSION_BY_MIME[validation.mime] || 'bin'
+    const extension = EXTENSION_BY_MIME[mimeToStore] || 'bin'
     const filename = `${randomUUID()}.${extension}`
-    await writeFile(path.join(dir, filename), file.buffer)
+    await writeFile(path.join(dir, filename), bufferToStore)
 
     results.push({
       type: validation.type, // 'I' | 'V' | 'A' | 'D'
-      mime: validation.mime,
-      sizeBytes: validation.sizeBytes,
+      mime: mimeToStore,
+      sizeBytes: bufferToStore.length,
       originalFilename: file.originalname,
       url: `/uploads/media/userfolder_${userAdminId}/whatsapp_sent_file/${filename}`,
     })

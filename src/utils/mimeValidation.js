@@ -38,7 +38,15 @@ const ALLOWLIST = {
     // Accepting both here is what actually makes voice messages work on those
     // browsers; the (rare) cost is a real *video* .webm file, if ever manually
     // attached via the file picker, would misclassify as audio-only too.
-    mimes: new Set(['audio/mpeg', 'audio/ogg', 'audio/mp4', 'audio/aac', 'audio/wav', 'audio/x-wav', 'audio/webm', 'video/webm']),
+    // `audio/opus` (not just `audio/ogg`) is what `file-type` reports for the
+    // Ogg/Opus files mediaStorage.js's remuxWebmToOggOpus produces — a distinct,
+    // more specific MIME registration for the same "Ogg container, Opus codec"
+    // shape. Needed so a message's already-remuxed file re-validates correctly
+    // on retry (see messagesSlice.js's retryMessage, which re-uploads the stored
+    // file, not the original recording).
+    mimes: new Set([
+      'audio/mpeg', 'audio/ogg', 'audio/opus', 'audio/mp4', 'audio/aac', 'audio/wav', 'audio/x-wav', 'audio/webm', 'video/webm',
+    ]),
     maxBytes: config.upload.maxAudioBytes,
   },
 }
