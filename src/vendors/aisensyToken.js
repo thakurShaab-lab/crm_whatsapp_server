@@ -1,4 +1,5 @@
 import { updateWhatsappToken } from '../models/employeesModel.js'
+import * as whatsappTokenModel from '../models/whatsappTokenModel.js'
 
 const REGENERATE_TOKEN_URL = 'https://backend.aisensy.com/direct-apis/t1/users/regenrate-token'
 const UPDATE_WEBHOOK_URL = 'https://backend.aisensy.com/direct-apis/t1/settings/update-webhook'
@@ -17,11 +18,9 @@ function decodeJwtPayload(token) {
 
 /**
  * Exact port of legacy `update_whatsapp_token()` from helper.php: regenerates the
- * AiSensy WABA token from the stored username/password/app id, and persists it back
- * onto `tbl_employees`. Legacy also inserts an audit row into a `whatsapp_token`
- * table — that table is outside this project's agreed schema scope (only the 5
- * originally-specified tables), so that insert is intentionally not replicated here;
- * the functional part (the employee row's own token/expiry) is still updated.
+ * AiSensy WABA token from the stored username/password/app id, persists it back onto
+ * `tbl_employees`, and logs the regeneration into `whatsapp_token` (legacy's audit
+ * trail of every token issued).
  */
 export async function refreshAiSensyToken(employee) {
   const credentials = `${employee.waLoginUsername}:${employee.whatsappApiPassword}:${employee.whatsappAppId}`
@@ -49,6 +48,7 @@ export async function refreshAiSensyToken(employee) {
   const tokenExpiresAt = payload?.iat ? new Date(payload.iat * 1000) : null
 
   await updateWhatsappToken({ empId: employee.empId, token, tokenExpiresAt })
+  await whatsappTokenModel.insertTokenLog({ empId: employee.empId, token })
 
   return { token, tokenExpiresAt }
 }

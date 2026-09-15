@@ -5,14 +5,21 @@ import * as manageWhstappTemplateModel from '../models/manageWhstappTemplateMode
 import * as templateVariableNameModel from '../models/templateVariableNameModel.js'
 import * as accountModel from '../models/accountModel.js'
 import * as leadsModel from '../models/leadsModel.js'
+import * as dealInfoModel from '../models/dealInfoModel.js'
 import * as employeesModel from '../models/employeesModel.js'
 import * as leadSourceModel from '../models/leadSourceModel.js'
+import * as stagesModel from '../models/stagesModel.js'
+import * as companyDetailsModel from '../models/companyDetailsModel.js'
 import * as crmWhatsappPermissionModel from '../models/crmWhatsappPermissionModel.js'
 import * as whatsappCountryWiseChargeModel from '../models/whatsappCountryWiseChargeModel.js'
 import * as whatsappSentFromClientModel from '../models/whatsappSentFromClientModel.js'
+import * as walletModel from '../models/walletModel.js'
+import * as automationLogModel from '../models/automationLogModel.js'
 import * as messagesModel from '../models/messagesModel.js'
 import * as logModel from '../models/logModel.js'
+import * as leadAutoCreation from './leadAutoCreation.js'
 import { refreshAiSensyTokenIfNeeded } from '../vendors/aisensyToken.js'
+import { getIsdFromMobile } from '../utils/isdCodes.js'
 import { logger } from '../utils/logger.js'
 import { isWindowExpired } from '../utils/mappers.js'
 
@@ -36,13 +43,19 @@ async function selectRawField({ table, idColumn, idValue, field, orderBy }) {
 
 /**
  * Resolves one `{{N}}` placeholder's value. `prefix` selects which CRM entity the
- * field lives on — exactly legacy's `cstmr`/`emp`/`cntct`/`lead` branches (from
+ * field lives on — exactly legacy's `cstmr`/`emp`/`cntct`/`lead`/`deal` branches (from
  * `send_automation_whatsapp_template()` in helper.php). Two branches are
  * deliberately simplified: `industry`/`country` id-to-name lookups are left as the
  * raw id (no `tbl_industry`/country-name table provided), and `extra` (custom
  * fields) always returns 'NA' (`customer_extra_field`/`_value` not provided) — both
- * documented gaps rather than guessed-at table structures. `deal`/`vndr` are never
- * reached since this integration only ever calls with section_type 1 or 2.
+ * documented gaps rather than guessed-at table structures. `deal.stage`/`.probability`/
+ * `.expected_revenue` are likewise simplified to read straight off `tbl_deal_info`'s
+ * own columns rather than legacy's `tbl_deal_stage`-history lookup (that table is
+ * outside this migration's 4-table scope) — `tbl_deal_info` itself carries the same
+ * fields, just without per-stage history. `vndr` is never reached (no `tbl_vendors`
+ * in scope; legacy itself only ever calls this with section_type 1 or 2 in practice,
+ * so `deal` is likewise dormant here — implemented for parity, not because anything
+ * currently triggers it).
  */
 async function resolveVariableValue({ prefix, field, accountId, userAdminId, manualValue }) {
   if (!field) return ''
@@ -87,6 +100,16 @@ async function resolveVariableValue({ prefix, field, accountId, userAdminId, man
     if (field === 'lead_source' && value > 0) {
       const source = await leadSourceModel.findById(value)
       return source?.title ?? value
+    }
+    return value ?? ''
+  }
+
+  if (prefix === 'deal') {
+    const value = await selectRawField({ table: 'tbl_deal_info', idColumn: 'account_id', idValue: accountId, field })
+    if (field === 'stage' && value > 0) {
+      const deal = await dealInfoModel.findByAccountId(accountId)
+      const stageInfo = deal ? await stagesModel.findByIdForAdmin({ userAdminId: deal.userAdminId, id: value }) : null
+      return stageInfo?.title ?? value
     }
     return value ?? ''
   }
@@ -159,6 +182,11 @@ async function resolvePaidTemplateFlag({ template, whatsappNumber, waNumber }) {
  * resolves from live CRM data regardless of what's passed here, matching legacy.
  * `mediaOverride` (`{url, mediaType, filename}`) overrides the template's own
  * configured media for this one send, matching legacy's optional file upload.
+ * `automationContext` (`{sourceId, stageId, sectionType, dealId}`), only ever
+ * supplied by `sendAutomationWhatsappTemplate`, gates the "Replica Copy For Opposite
+ * Waba No" mirror + its `tbl_automation_log` audit row below — legacy only logs to
+ * `tbl_automation_log` from the automation-trigger call site, never from the manual
+ * "Send Approved Template" popup (which has no source/stage/section context to log).
  */
 /**
  * `conversationMobile`, when given, is the conversation's own canonical mobile
@@ -180,6 +208,7 @@ export async function sendApprovedTemplateToRecipient({
   manualValues = {},
   mediaOverride = null,
   conversationMobile = null,
+  automationContext = null,
 }) {
   const template = await manageWhstappTemplateModel.findById(templateId)
   if (!template || template.status !== 'Y' || template.templateVendor !== 'A') return { sent: false, reason: 'template_not_usable' }
@@ -284,12 +313,81 @@ export async function sendApprovedTemplateToRecipient({
 
   await accountModel.recordTemplateSent({ accountId: recipient.accountId, templateId })
   if (recipient.leadId > 0) await leadsModel.recordTemplateSent({ accountId: recipient.accountId, templateId })
+  // Legacy runs this same bookkeeping against `tbl_deal_info` unconditionally too
+  // (helper.php ~lines 708-726/768-786) — a no-op here whenever no deal exists yet
+  // for this account (dealInfoModel.recordTemplateSent silently returns).
+  await dealInfoModel.recordTemplateSent({ accountId: recipient.accountId, templateId })
 
   const permission = await crmWhatsappPermissionModel.findByClientId(userAdminId)
   if (permission && permission.customerType !== 'N') {
     const cost = await whatsappCountryWiseChargeModel.findCost({ countryCode: recipient.countryCode, forEmp: employee.waEmpMemType })
     const amount = template.category === 'U' ? (cost?.waUtilityAmt ?? 0) : (cost?.waMktgAmt ?? 0)
-    await crmWhatsappPermissionModel.deductForSend({ clientId: userAdminId, category: template.category, amount, current: permission })
+
+    // Wallet-recharge-driven billing-tier upgrade — legacy's helper.php ~lines
+    // 815-820: once this tenant has ever made a genuine paid recharge, both
+    // `tbl_employees.wa_member_type` and `crm_whatsapp_permission.customer_type`
+    // flip to 'R' (Recharge), re-checked on every send.
+    const hasRecharge = await walletModel.hasPaidRecharge(userAdminId)
+    if (hasRecharge) {
+      await employeesModel.updateMemberType({ empId: userAdminId, waMemberType: 'R' })
+    }
+
+    await crmWhatsappPermissionModel.deductForSend({
+      clientId: userAdminId,
+      category: template.category,
+      amount,
+      current: permission,
+      customerType: hasRecharge ? 'R' : undefined,
+    })
+  }
+
+  // "Replica Copy For Opposite Waba No" (helper.php ~lines 845-990) — only from the
+  // automation-trigger call site (see this function's doc comment), and only when
+  // this employee is allowed to mirror sends at all, and only when the number just
+  // messaged actually is another tenant's own primary WABA number.
+  if (automationContext && employee.canSendMsgOnWaba === 'Y') {
+    const targetEmployee = await employeesModel.findEmployeeByWabaNo(whatsappNumber)
+    if (targetEmployee) {
+      const senderWabaNumber = employee.whatsappWabano
+      const senderCountryCode = getIsdFromMobile(senderWabaNumber)
+      const companyName = (await companyDetailsModel.findCompanyName(userAdminId)) || recipient.clientName
+
+      const replica = await leadAutoCreation.resolveOrCreateReplicaAccount({
+        targetUserAdminId: targetEmployee.empId,
+        mobile: senderWabaNumber,
+        countryCode: senderCountryCode,
+        companyName,
+      })
+
+      await messagesModel.insertMessage({
+        response: 'Waba Msg Received',
+        name: companyName,
+        mobile: senderWabaNumber,
+        type: 'T',
+        text: templateMsg,
+        waNumber: whatsappNumber,
+        sendBy: targetEmployee.empId,
+        userAdminId: targetEmployee.empId,
+        accountId: replica.accountId,
+        sourceId: sourceMsgId,
+        msgtype: 'R',
+        status: 'Y',
+        recvDate: new Date(),
+        vendorType: targetEmployee.whatsappVendor,
+        countryCode: Number(senderCountryCode) || 91,
+      })
+
+      await automationLogModel.insertLog({
+        sourceId: automationContext.sourceId,
+        stageId: automationContext.stageId,
+        userAdminId: targetEmployee.empId,
+        secType: automationContext.sectionType,
+        accountId: replica.accountId,
+        leadId: recipient.leadId,
+        dealId: automationContext.dealId || 0,
+        mobile: senderWabaNumber,
+      })
+    }
   }
 
   return { sent: true, sourceId: sourceMsgId, message: inserted }
@@ -308,16 +406,17 @@ function recipientFromAccount(account, leadId = 0, clientNameOverride = null) {
 }
 
 /**
- * Ports `send_automation_whatsapp_template()` (helper.php), scoped to this
- * integration's only two real call sites: a brand-new account (section_type=1) or
- * lead (section_type=2) just created by leadAutoCreation.js. NOT ported: the deal
- * branch (section_type=3, unreachable here), the bulk multi-recipient broadcast
- * loop (our call sites always create exactly one record), the "replica copy for
- * opposite WABA number" mirror-account send, and the `tbl_wallet`-based
- * auto-upgrade of `customer_type` to 'R' (wallet deduction still runs whenever
- * `customer_type` is already anything but the default 'N').
+ * Ports `send_automation_whatsapp_template()` (helper.php). This integration's only
+ * real call sites are a brand-new account (section_type=1) or lead (section_type=2)
+ * just created by leadAutoCreation.js — section_type=3 (deal) is implemented for
+ * parity with legacy (which defines the same branch in this one shared function),
+ * but nothing in this build's own trigger points ever calls it with `dealId`,
+ * exactly like legacy itself only ever being called with section_type 1 or 2 in
+ * practice. NOT ported: the bulk multi-recipient broadcast loop (our call sites
+ * always resolve exactly one recipient, vs. legacy's `WHILE` over every matching
+ * row).
  */
-export async function sendAutomationWhatsappTemplate({ userAdminId, sourceId, stageId, sectionType, accountId, leadId }) {
+export async function sendAutomationWhatsappTemplate({ userAdminId, sourceId, stageId, sectionType, accountId, leadId, dealId }) {
   const rule = await automationModel.findMatchingRule({ userAdminId, sectionType, sourceId, stageId })
   if (!rule) return { sent: false, reason: 'no_matching_rule' }
 
@@ -332,11 +431,25 @@ export async function sendAutomationWhatsappTemplate({ userAdminId, sourceId, st
     const account = await accountModel.findAccountById({ userAdminId, accountId: lead.accountId })
     if (!account) return { sent: false, reason: 'opted_out_or_missing' }
     recipient = recipientFromAccount(account, lead.leadId, lead.firstName)
+  } else if (sectionType === 3) {
+    // Legacy's join: tbl_deal_info -> tbl_leads (by lead_id) -> tbl_account (by
+    // account_id, stopService='N') — helper.php ~line 131.
+    const deal = await dealInfoModel.findById(dealId)
+    if (!deal) return { sent: false, reason: 'deal_not_found' }
+    const account = await accountModel.findAccountById({ userAdminId, accountId: deal.accountId })
+    if (!account) return { sent: false, reason: 'opted_out_or_missing' }
+    const lead = await leadsModel.findById(deal.leadId)
+    recipient = recipientFromAccount(account, deal.leadId, lead?.firstName)
   } else {
     return { sent: false, reason: 'unsupported_section_type' }
   }
 
-  return sendApprovedTemplateToRecipient({ userAdminId, templateId: rule.templateId, recipient })
+  return sendApprovedTemplateToRecipient({
+    userAdminId,
+    templateId: rule.templateId,
+    recipient,
+    automationContext: { sourceId, stageId, sectionType, dealId },
+  })
 }
 
 /**

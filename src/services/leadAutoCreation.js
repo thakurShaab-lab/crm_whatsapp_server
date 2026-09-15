@@ -132,3 +132,93 @@ export async function resolveInboundOwnership({ userAdminId, mobile, countryCode
 
   return { accountId, leadId, jrId, sourceId, leadStageId, created: true }
 }
+
+/**
+ * "Replica Copy For Opposite Waba No" (helper.php ~lines 845-990, `sec_type`-agnostic
+ * — the same block runs after every successful automated template send): when the
+ * number just messaged is itself another tenant's own primary WABA number, that
+ * tenant's side needs its own CRM account/contact/lead for *our* WABA number, so the
+ * mirrored "received" message (see templateAutomation.js) can be attributed to it.
+ * This is the same find-or-create shape as `resolveInboundOwnership` above, except
+ * ownership: legacy assigns the new account/contact/lead directly to
+ * `sent_user_admin_id` (the receiving tenant's own admin id), never a round-robin
+ * employee — there is no `fbinq_forwarding_tbl` routing in this flow.
+ *
+ * @returns {Promise<{accountId: number, leadId: number}>}
+ */
+export async function resolveOrCreateReplicaAccount({ targetUserAdminId, mobile, countryCode, companyName }) {
+  const lastTenMobile = stripCountryCode(mobile, countryCode)
+
+  const existingAccount = await accountModel.findAccountByPhoneVariants({ userAdminId: targetUserAdminId, mobile, lastTenMobile })
+  if (existingAccount) {
+    const existingLead = await leadsModel.findLeadByAccountId(existingAccount.accountId)
+    return { accountId: existingAccount.accountId, leadId: existingLead?.leadId || 0 }
+  }
+
+  const sourceId = await leadSourceModel.findOrCreateWhatsappSource(targetUserAdminId)
+  const now = new Date()
+
+  const accountId = await accountModel.insertAccount({
+    accountName: companyName,
+    contactPersonName: companyName,
+    createdBy: targetUserAdminId,
+    userAdminId: targetUserAdminId,
+    accountOwner: targetUserAdminId,
+    phone: mobile,
+    source: sourceId,
+    sicCode: 'g',
+    createdAt: now,
+    status: 1,
+    ctryIsdCode: String(countryCode || '91'),
+  })
+
+  await accountAddressesModel.insertPlaceholderAddress(accountId)
+
+  let crmContact = await crmContactsModel.findContactByAccountId(accountId)
+  if (!crmContact) {
+    const contactId = await crmContactsModel.insertContact({
+      firstName: companyName,
+      createdBy: targetUserAdminId,
+      userAdminId: targetUserAdminId,
+      accountName: accountId,
+      phone: mobile,
+      mobile,
+      createdAt: now,
+      modifyAt: now,
+      status: 1,
+    })
+    crmContact = { contactId }
+  }
+
+  let leadId = 0
+  const existingLeadForAccount = await leadsModel.findLeadByAccountId(accountId)
+  if (!existingLeadForAccount) {
+    const initialStage = await stagesModel.findInitialLeadStage(targetUserAdminId)
+    const leadStageId = initialStage ? String(initialStage.id) : ''
+
+    leadId = await leadsModel.insertLead({
+      accountId,
+      leadStatus: leadStageId,
+      addedBy: targetUserAdminId,
+      userAdminId: targetUserAdminId,
+      leadOwner: targetUserAdminId,
+      contactId: crmContact.contactId,
+      leadTitle: companyName,
+      firstName: companyName,
+      company: companyName,
+      mobile,
+      leadSource: String(sourceId),
+      createdAt: now,
+      nextDueDate: now,
+      nextDueDateAddBy: 'C',
+      ctryIsdCode: String(countryCode || '91'),
+      status: '1',
+    })
+
+    await activityModel.insertFreshPartyActivity({ jrId: targetUserAdminId, userAdminId: targetUserAdminId, leadId })
+  } else {
+    leadId = existingLeadForAccount.leadId
+  }
+
+  return { accountId, leadId }
+}

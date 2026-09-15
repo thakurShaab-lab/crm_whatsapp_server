@@ -39,3 +39,8 @@ export async function updateWhatsappToken({ empId, token, tokenExpiresAt }) {
       ),
     )
 }
+
+/** Flips `wa_member_type` to 'R' (Recharge) once a genuine wallet recharge is found — legacy's helper.php ~line 818 (`UPDATE tbl_employees set wa_member_type='R' where emp_id=...`), paired with crmWhatsappPermissionModel.deductForSend's own `customer_type='R'` update. */
+export async function updateMemberType({ empId, waMemberType }) {
+  await db.update(employees).set({ waMemberType }).where(eq(employees.empId, empId))
+}
