@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeDateWindow, DAYS_PER_PAGE } from './dateWindow.js'
+import { computeDateWindow, startOfLocalDay, startOfNextLocalDay, DAYS_PER_PAGE } from './dateWindow.js'
 
 // `toISOString()` converts to UTC first, which shifts the calendar date under any
 // non-UTC local timezone — these boundaries are deliberately local-midnight-aligned
@@ -69,4 +69,19 @@ test('an empty toBoundaryInput and a genuinely absent cursor behave identically 
   const b = computeDateWindow(undefined, now)
   assert.equal(a.fromBoundary.getTime(), b.fromBoundary.getTime())
   assert.equal(a.toBoundary.getTime(), b.toBoundary.getTime())
+})
+
+// Used directly by the "Date Filter" tab's inclusive-range query in messagesModel.js.
+test('startOfLocalDay zeroes the time but keeps the same calendar day', () => {
+  const start = startOfLocalDay(new Date('2026-09-14T18:45:30'))
+  assert.equal(localDateString(start), '2026-09-14')
+  assert.equal(start.getHours(), 0)
+  assert.equal(start.getMinutes(), 0)
+})
+
+test('startOfNextLocalDay is exactly one calendar day after startOfLocalDay, regardless of time-of-day', () => {
+  const day = startOfLocalDay(new Date('2026-09-14T18:45:30'))
+  const nextDay = startOfNextLocalDay(new Date('2026-09-14T00:00:01'))
+  assert.equal(nextDay.getTime() - day.getTime(), 24 * 3_600_000)
+  assert.equal(localDateString(nextDay), '2026-09-15')
 })

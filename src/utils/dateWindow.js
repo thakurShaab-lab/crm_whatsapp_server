@@ -1,9 +1,15 @@
 export const DAYS_PER_PAGE = 3
 
+/** Midnight of `date`'s own calendar day, in the server's local timezone. */
+export function startOfLocalDay(date) {
+  const start = new Date(date)
+  start.setHours(0, 0, 0, 0)
+  return start
+}
+
 /** Midnight of the calendar day after `date`, in the server's local timezone (same "no explicit TZ conversion" convention every other date computation in this app already uses — see mappers.js's isWindowExpired). */
-function startOfNextLocalDay(date) {
-  const next = new Date(date)
-  next.setHours(0, 0, 0, 0)
+export function startOfNextLocalDay(date) {
+  const next = startOfLocalDay(date)
   next.setDate(next.getDate() + 1)
   return next
 }

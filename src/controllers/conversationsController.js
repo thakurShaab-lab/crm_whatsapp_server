@@ -19,7 +19,7 @@ export async function buildConversationSummaryDto({ userAdminId, waNumber, mobil
 }
 
 export async function listConversations(req, res) {
-  const { search, filter, cursor, limit } = req.query
+  const { search, filter, fromDate, toDate, cursor, limit } = req.query
   const decoded = decodeCursor(cursor)
   const pageSize = limit ? Number(limit) : PAGE_SIZE
 
@@ -28,6 +28,11 @@ export async function listConversations(req, res) {
     waNumber: req.waNumber,
     search,
     unreadOnly: filter === 'unread',
+    // Only meaningful for the "Date Filter" tab, but harmless to pass through
+    // regardless of `filter`'s value — listConversations only applies a bound
+    // when it's actually present.
+    fromDate: filter === 'dateRange' ? fromDate : null,
+    toDate: filter === 'dateRange' ? toDate : null,
     cursor: decoded ? { recvDate: new Date(decoded.recvDate), mobile: decoded.mobile } : null,
     limit: pageSize,
   })

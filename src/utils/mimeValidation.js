@@ -51,6 +51,8 @@ const ALLOWLIST = {
   },
 }
 
+const FRIENDLY_LABEL = { I: 'image', V: 'video', D: 'document', A: 'audio' }
+
 function messageTypeForMime(mime) {
   for (const [type, rule] of Object.entries(ALLOWLIST)) {
     if (rule.mimes.has(mime)) return type
@@ -79,7 +81,7 @@ export async function detectAndValidateUpload(buffer, declaredMime) {
 
   const { maxBytes } = ALLOWLIST[type]
   if (buffer.length > maxBytes) {
-    return { ok: false, reason: `File exceeds the ${Math.round(maxBytes / (1024 * 1024))}MB limit for ${type}` }
+    return { ok: false, reason: `File exceeds the ${Math.round(maxBytes / (1024 * 1024))}MB limit for ${FRIENDLY_LABEL[type]} files` }
   }
 
   return { ok: true, type, mime, sizeBytes: buffer.length }

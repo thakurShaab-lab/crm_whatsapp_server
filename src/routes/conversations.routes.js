@@ -11,7 +11,9 @@ router.get(
   validate({
     query: z.object({
       search: z.string().trim().max(255).optional(),
-      filter: z.enum(['recent', 'unread']).optional(),
+      filter: z.enum(['recent', 'unread', 'dateRange']).optional(),
+      fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       cursor: z.string().optional(),
       limit: z.coerce.number().int().min(1).max(100).optional(),
     }),

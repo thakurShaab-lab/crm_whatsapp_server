@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, gt, gte, isNotNull, lt, or, like, max, count } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { messages } from '../schema/messages.js'
+import { startOfLocalDay, startOfNextLocalDay } from '../utils/dateWindow.js'
 
 function scope({ userAdminId, waNumber }) {
   return [eq(messages.userAdminId, userAdminId), eq(messages.waNumber, waNumber)]
@@ -12,7 +13,7 @@ function scope({ userAdminId, waNumber }) {
  * subquery + join — the same "MAX(recvDate) GROUP BY mobile, then join back"
  * shape the legacy PHP itself used, just expressed without a raw SQL string.
  */
-export async function listConversations({ userAdminId, waNumber, search, unreadOnly, cursor, limit }) {
+export async function listConversations({ userAdminId, waNumber, search, unreadOnly, fromDate, toDate, cursor, limit }) {
   const baseConditions = scope({ userAdminId, waNumber })
   if (search) {
     baseConditions.push(or(like(messages.name, `%${search}%`), like(messages.mobile, `%${search}%`)))
@@ -49,6 +50,17 @@ export async function listConversations({ userAdminId, waNumber, search, unreadO
   }
   if (unreadOnly) {
     outerConditions.push(gt(unread.unreadCount, 0))
+  }
+  // Filters by the same last-message timestamp already driving the sidebar's own
+  // display/sort (latest.maxRecvDate) — no new field. `toDate` is inclusive of that
+  // whole calendar day (matches computeDateWindow's own day-boundary convention
+  // above), so "01/09" to "15/09" covers everything through the end of the 15th.
+  // Either bound is independent — passing just one is a valid open-ended range.
+  if (fromDate) {
+    outerConditions.push(gte(latest.maxRecvDate, startOfLocalDay(new Date(fromDate))))
+  }
+  if (toDate) {
+    outerConditions.push(lt(latest.maxRecvDate, startOfNextLocalDay(new Date(toDate))))
   }
 
   let query = db
