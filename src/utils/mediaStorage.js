@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { config } from '../config/index.js'
 import { detectAndValidateUpload } from './mimeValidation.js'
 import { remuxWebmToOggOpus } from './audioTranscode.js'
+import { logger } from './logger.js'
 
 export const EXTENSION_BY_MIME = {
   'image/jpeg': 'jpg',
@@ -69,6 +70,33 @@ export async function saveMediaBuffer({ userAdminId, subfolder, buffer, mime, fi
   await writeFile(path.join(dir, filename), buffer)
 
   return { filename, url: `/uploads/media/userfolder_${userAdminId}/${subfolder}/${filename}` }
+}
+
+/**
+ * Permanently deletes one previously-stored media file by its public `/uploads/...`
+ * URL (exactly what `saveMediaBuffer`/`storeUploadedFiles` returned and what got
+ * stored on the message row as `image_url`) — used when hard-deleting a
+ * conversation, so an image/video/audio/document a contact exchanged doesn't keep
+ * sitting on disk after every DB row about it is gone. Best-effort: a file that's
+ * already missing, or a value that was never a local `/uploads/...` path (nothing
+ * currently stores anything else, but this stays defensive rather than assuming
+ * it), is silently skipped — a filesystem hiccup while cleaning up one attachment
+ * must never be the reason a chat fails to delete.
+ */
+export async function deleteMediaFile(url) {
+  if (!url || !url.startsWith('/uploads/')) return
+
+  const uploadRoot = path.resolve(config.upload.dir)
+  const filePath = path.resolve(uploadRoot, url.slice('/uploads/'.length))
+  // Defense in depth: refuse to unlink anything `path.resolve` didn't keep inside
+  // the upload root, however implausible that is for a server-generated URL.
+  if (filePath !== uploadRoot && !filePath.startsWith(uploadRoot + path.sep)) return
+
+  try {
+    await unlink(filePath)
+  } catch (error) {
+    if (error.code !== 'ENOENT') logger.warn({ err: error, url }, 'deleteMediaFile: failed to remove file')
+  }
 }
 
 export async function storeUploadedFiles(userAdminId, files) {

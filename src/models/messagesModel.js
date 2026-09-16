@@ -244,6 +244,15 @@ export async function findSourceIdsForConversation({ userAdminId, waNumber, mobi
   return rows.map((row) => row.sourceId).filter(Boolean)
 }
 
+/** Every stored media file (`/uploads/...` URL) this conversation's messages reference — used to also remove the actual files from disk on a hard delete, not just the DB rows pointing at them. */
+export async function findMediaUrlsForConversation({ userAdminId, waNumber, mobile }) {
+  const rows = await db
+    .select({ imageUrl: messages.imageUrl })
+    .from(messages)
+    .where(and(...scope({ userAdminId, waNumber }), eq(messages.mobile, mobile)))
+  return rows.map((row) => row.imageUrl).filter(Boolean)
+}
+
 /**
  * Permanently deletes every message row for this conversation — a real, irreversible
  * DELETE (not a hide/soft-delete flag), scoped exactly like every other query here

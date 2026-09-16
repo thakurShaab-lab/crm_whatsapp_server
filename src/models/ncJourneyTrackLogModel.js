@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { desc, eq, inArray } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { ncJourneyTrackLog } from '../schema/ncJourneyTrackLog.js'
 
@@ -10,4 +10,11 @@ export async function findLastLog(trackId) {
 
 export async function insertLog({ trackId, nodeId }) {
   await db.insert(ncJourneyTrackLog).values({ logTrackId: trackId, logNodeId: nodeId, logDatetime: new Date() })
+}
+
+/** Permanently removes every node-visit log for the given tracker ids — used when hard-deleting a conversation, ahead of removing the trackers themselves (see ncJourneyTrackerModel.findTrackIdsForMobile). */
+export async function deleteByTrackIds(trackIds) {
+  const ids = [...new Set(trackIds.filter(Boolean))]
+  if (ids.length === 0) return
+  await db.delete(ncJourneyTrackLog).where(inArray(ncJourneyTrackLog.logTrackId, ids))
 }

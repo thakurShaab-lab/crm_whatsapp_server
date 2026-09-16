@@ -1,8 +1,13 @@
 import * as messagesModel from '../models/messagesModel.js'
 import * as accountModel from '../models/accountModel.js'
 import * as sentResponseModel from '../models/sentResponseModel.js'
+import * as whatsappSentFromClientModel from '../models/whatsappSentFromClientModel.js'
+import * as automationLogModel from '../models/automationLogModel.js'
+import * as ncJourneyTrackerModel from '../models/ncJourneyTrackerModel.js'
+import * as ncJourneyTrackLogModel from '../models/ncJourneyTrackLogModel.js'
 import { toConversationSummaryDto } from '../utils/mappers.js'
 import { encodeCursor, decodeCursor } from '../utils/pagination.js'
+import { deleteMediaFile } from '../utils/mediaStorage.js'
 import { emitConversationRead, emitConversationDeleted } from '../socket/emitters.js'
 
 const PAGE_SIZE = 30
@@ -79,16 +84,40 @@ export async function markRead(req, res) {
 }
 
 /**
- * Hard delete — permanently removes every message (and their tick-status rows) for
- * this conversation. Irreversible: there is no separate "deleted" flag, and no undo.
+ * Hard delete — permanently removes every piece of data this app itself stores
+ * about this conversation: the messages, their delivery-status ("tick") rows,
+ * template-send audit rows, any opposite-WABA automation-log rows, any in-progress
+ * chatbot/journey tracker state, and the actual media files (images/videos/audio/
+ * documents) those messages reference on disk — not just the DB rows pointing at
+ * them. Irreversible: there is no separate "deleted" flag, and no undo. Deliberately
+ * does NOT touch the CRM's own account/lead/contact record for this phone number —
+ * that's a separate business entity outside "this chat"'s own data.
  */
 export async function deleteConversation(req, res) {
   const { mobile } = req.params
   const { userAdminId, waNumber } = req
 
-  const sourceIds = await messagesModel.findSourceIdsForConversation({ userAdminId, waNumber, mobile })
-  await sentResponseModel.deleteByExternalIds(sourceIds)
+  const [sourceIds, mediaUrls, journeyTrackIds] = await Promise.all([
+    messagesModel.findSourceIdsForConversation({ userAdminId, waNumber, mobile }),
+    messagesModel.findMediaUrlsForConversation({ userAdminId, waNumber, mobile }),
+    ncJourneyTrackerModel.findTrackIdsForMobile({ wabaNumber: waNumber, clientMobile: mobile }),
+  ])
+
+  await ncJourneyTrackLogModel.deleteByTrackIds(journeyTrackIds)
+
+  await Promise.all([
+    sentResponseModel.deleteForConversation({ sourceIds, phoneNo: mobile }),
+    whatsappSentFromClientModel.deleteBySendTo({ userAdminId, mobile }),
+    automationLogModel.deleteByMobile({ userAdminId, mobile }),
+    ncJourneyTrackerModel.deleteByMobile({ wabaNumber: waNumber, clientMobile: mobile }),
+  ])
+
   const deletedCount = await messagesModel.deleteConversation({ userAdminId, waNumber, mobile })
+
+  // Best-effort file cleanup — runs after the DB rows are gone, and a failure to
+  // remove any one file must never fail the request (the conversation is already
+  // deleted at this point; see deleteMediaFile's own error handling).
+  await Promise.allSettled(mediaUrls.map((url) => deleteMediaFile(url)))
 
   emitConversationDeleted(waNumber, { mobile })
   res.json({ mobile, deletedCount })

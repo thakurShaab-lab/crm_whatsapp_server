@@ -1,4 +1,4 @@
-import { desc, eq, inArray } from 'drizzle-orm'
+import { desc, eq, inArray, or } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { sentResponse } from '../schema/sentResponse.js'
 
@@ -37,11 +37,25 @@ export async function findLatestStatus(sourceId) {
   return map.get(sourceId) || null
 }
 
-/** Permanently removes every delivery-status row tied to the given message source ids — used when hard-deleting a conversation, so no orphaned tick-status rows are left behind. */
-export async function deleteByExternalIds(sourceIds) {
-  const ids = [...new Set(sourceIds.filter(Boolean))]
-  if (ids.length === 0) return
-  await db.delete(sentResponse).where(inArray(sentResponse.externalId, ids))
+/**
+ * Removes every status row for a hard-deleted conversation in one statement: by
+ * `external_id` (the message source ids being deleted) and, as a defense-in-depth
+ * catch-all, by `phone_no` (always set to the same conversation mobile — see
+ * webhooksController.js's `insertStatusEvent` call) for any status callback whose
+ * `external_id` somehow never matched a message row. Deliberately one DELETE, not
+ * two separate ones — running `external_id IN (...)` and `phone_no = ...` as
+ * separate concurrent deletes against the same table was briefly tried and hit a
+ * genuine MySQL deadlock (two statements locking the same table's rows in a
+ * different order); a single statement has no such race.
+ */
+export async function deleteForConversation({ sourceIds, phoneNo }) {
+  const ids = [...new Set((sourceIds || []).filter(Boolean))]
+  if (ids.length === 0 && !phoneNo) return
+
+  const conditions = []
+  if (ids.length > 0) conditions.push(inArray(sentResponse.externalId, ids))
+  if (phoneNo) conditions.push(eq(sentResponse.phoneNo, phoneNo))
+  await db.delete(sentResponse).where(or(...conditions))
 }
 
 /** Appends a new delivery-status row — mirrors how the real vendor webhook feed writes this table. */

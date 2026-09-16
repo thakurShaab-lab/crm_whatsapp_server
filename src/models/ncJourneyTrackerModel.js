@@ -24,3 +24,17 @@ export async function insertTracker({ clientId, wabaNumber, journeyId, clientMob
   })
   return Array.isArray(result) ? result[0].insertId : result.insertId
 }
+
+/** Every tracker id for this (WABA, client) pair — used to also clean up their `nc_journey_track_log` rows before the trackers themselves are removed on a hard delete. */
+export async function findTrackIdsForMobile({ wabaNumber, clientMobile }) {
+  const rows = await db
+    .select({ trackId: ncJourneyTracker.trackId })
+    .from(ncJourneyTracker)
+    .where(and(eq(ncJourneyTracker.trackMobileNo, wabaNumber), eq(ncJourneyTracker.trackFromMobileNo, clientMobile)))
+  return rows.map((row) => row.trackId)
+}
+
+/** Permanently removes every journey tracker for this (WABA, client) pair — used when hard-deleting a conversation. Call `ncJourneyTrackLogModel.deleteByTrackIds` (with `findTrackIdsForMobile`'s result) first, so no orphaned log rows are left behind. */
+export async function deleteByMobile({ wabaNumber, clientMobile }) {
+  await db.delete(ncJourneyTracker).where(and(eq(ncJourneyTracker.trackMobileNo, wabaNumber), eq(ncJourneyTracker.trackFromMobileNo, clientMobile)))
+}

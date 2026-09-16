@@ -1,3 +1,4 @@
+import { and, eq } from 'drizzle-orm'
 import { db } from '../config/db.js'
 import { automationLog } from '../schema/automationLog.js'
 
@@ -21,4 +22,9 @@ export async function insertLog({ sourceId, stageId, userAdminId, secType, accou
     mobile,
     recvDate: new Date(),
   })
+}
+
+/** Permanently removes this tenant's automation-log rows for one contact — used when hard-deleting a conversation. */
+export async function deleteByMobile({ userAdminId, mobile }) {
+  await db.delete(automationLog).where(and(eq(automationLog.userAdminId, userAdminId), eq(automationLog.mobile, mobile)))
 }
