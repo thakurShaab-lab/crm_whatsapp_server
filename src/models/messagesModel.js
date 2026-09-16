@@ -125,6 +125,26 @@ export async function findLatestTmpName({ userAdminId, waNumber, mobile }) {
   return row?.tmpName || null
 }
 
+// The exact (and only) fields toMessageDto/the thread-fetch response actually read
+// off a message row — see utils/mappers.js's toMessageDto and messagesController.js's
+// listThreadMessages. The table has 66 columns, several of them large `text` blobs
+// (response/converted_text/user_answer/source_url/...) that nothing here uses; a
+// wide `select()` pulls all of that across the wire for every row in a page for
+// nothing, which matters a lot once a thread has hundreds/thousands of messages.
+const THREAD_MESSAGE_COLUMNS = {
+  sl: messages.sl,
+  mobile: messages.mobile,
+  msgtype: messages.msgtype,
+  type: messages.type,
+  actualName: messages.actualName,
+  text: messages.text,
+  imageUrl: messages.imageUrl,
+  sourceId: messages.sourceId,
+  status: messages.status,
+  recvDate: messages.recvDate,
+  countryCode: messages.countryCode,
+}
+
 /**
  * Every message in this conversation whose `recvDate` falls in the calendar-day
  * window `[fromBoundary, toBoundary)` — see utils/dateWindow.js. `sl` (not
@@ -143,7 +163,7 @@ export async function listThreadMessagesByWindow({ userAdminId, waNumber, mobile
   if (countryCode != null) conditions.push(eq(messages.countryCode, Number(countryCode)))
 
   return db
-    .select()
+    .select(THREAD_MESSAGE_COLUMNS)
     .from(messages)
     .where(and(...conditions))
     .orderBy(asc(messages.recvDate), asc(messages.sl))

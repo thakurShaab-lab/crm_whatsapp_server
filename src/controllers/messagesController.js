@@ -53,31 +53,41 @@ export async function listThreadMessages(req, res) {
   const decoded = decodeCursor(cursor)
   const { fromBoundary, toBoundary } = computeDateWindow(decoded?.to ? new Date(decoded.to) : null)
 
-  const rows = await messagesModel.listThreadMessagesByWindow({
-    userAdminId: req.userAdminId,
-    waNumber: req.waNumber,
-    mobile,
-    countryCode: ctrIdNum,
-    fromBoundary,
-    toBoundary,
-  })
+  // Everything below is independent of everything else here — none of these six
+  // queries reads another's result — so they're fired as one batch of concurrent
+  // round trips instead of one after another. The DB is a remote host, so each
+  // sequential `await` used to add its own full network round trip on top of the
+  // last; batching them cuts that from ~6x one round trip to ~1x (the slowest of
+  // the six), which is most of where a thread's load time was going.
+  const [rows, hasMore, account, lastInboundReply, lastOutboundTemplate, tmpName] = await Promise.all([
+    messagesModel.listThreadMessagesByWindow({
+      userAdminId: req.userAdminId,
+      waNumber: req.waNumber,
+      mobile,
+      countryCode: ctrIdNum,
+      fromBoundary,
+      toBoundary,
+    }),
+    // Independent of whether *this* window had any messages — a day, or the whole
+    // 3-day window, can be empty while older history still exists further back.
+    messagesModel.hasMessagesBefore({
+      userAdminId: req.userAdminId,
+      waNumber: req.waNumber,
+      mobile,
+      countryCode: ctrIdNum,
+      boundary: fromBoundary,
+    }),
+    // refid (account_id) comes straight from the CRM record the chat was opened
+    // from — when present it's the real identity, no phone-matching guess needed.
+    refidNum
+      ? accountModel.findAccountById({ userAdminId: req.userAdminId, accountId: refidNum })
+      : accountModel.findAccountByPhone({ userAdminId: req.userAdminId, mobile, countryCode: ctrIdNum ?? '91' }),
+    messagesModel.findLastInboundReply({ mobile, waNumber: req.waNumber }),
+    messagesModel.findLastOutboundTemplate({ mobile, waNumber: req.waNumber }),
+    messagesModel.findLatestTmpName({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
+  ])
 
-  // Independent of whether *this* window had any messages — a day, or the whole
-  // 3-day window, can be empty while older history still exists further back.
-  const hasMore = await messagesModel.hasMessagesBefore({
-    userAdminId: req.userAdminId,
-    waNumber: req.waNumber,
-    mobile,
-    countryCode: ctrIdNum,
-    boundary: fromBoundary,
-  })
   const nextCursor = hasMore ? encodeCursor({ to: fromBoundary.toISOString() }) : null
-
-  // refid (account_id) comes straight from the CRM record the chat was opened from —
-  // when present it's the real identity, no phone-matching guess needed.
-  const account = refidNum
-    ? await accountModel.findAccountById({ userAdminId: req.userAdminId, accountId: refidNum })
-    : await accountModel.findAccountByPhone({ userAdminId: req.userAdminId, mobile, countryCode: ctrIdNum ?? '91' })
 
   if (account && forType && account.userType != null) {
     const resolvedFor = USER_TYPE_TO_FOR[account.userType]
@@ -86,13 +96,9 @@ export async function listThreadMessages(req, res) {
     }
   }
 
-  // Batched so a page of messages never does one status lookup per row.
-  const [sentStatusMap, lastInboundReply, lastOutboundTemplate, tmpName] = await Promise.all([
-    sentResponseModel.findLatestStatusMap(rows.map((row) => row.sourceId)),
-    messagesModel.findLastInboundReply({ mobile, waNumber: req.waNumber }),
-    messagesModel.findLastOutboundTemplate({ mobile, waNumber: req.waNumber }),
-    messagesModel.findLatestTmpName({ userAdminId: req.userAdminId, waNumber: req.waNumber, mobile }),
-  ])
+  // The one query that does depend on another's result (needs rows' sourceIds) —
+  // still batched across the whole page so it's never one lookup per row.
+  const sentStatusMap = await sentResponseModel.findLatestStatusMap(rows.map((row) => row.sourceId))
 
   // Already ascending (oldest-first) straight from the model query — no client-side reversal needed.
   const items = rows.map((row) => toMessageDto(row, sentStatusMap.get(row.sourceId)))

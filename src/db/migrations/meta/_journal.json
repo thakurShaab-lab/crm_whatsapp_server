@@ -43,6 +43,13 @@
       "when": 1789468358381,
       "tag": "0005_friendly_iceman",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1789573200000,
+      "tag": "0006_add_thread_window_index",
+      "breakpoints": true
     }
   ]
 }
